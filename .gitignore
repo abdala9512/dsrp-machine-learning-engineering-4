@@ -6,6 +6,7 @@
 *.tfvars.json
 iac/.terraform.lock.hcl
 iac/.terraform/
+iac/*.out
 
 # Byte-compiled / optimized / DLL files
 __pycache__/
