@@ -1,0 +1,142 @@
+version: '3'
+
+vars:
+  BACKEND_RG_NAME: "rg-terraform-state-dsrp4"
+  BACKEND_LOCATION: "East US"
+  CONTAINER_NAME: "tfstate"
+  KEY_NAME: "mlops-dsrp4.terraform.tfstate"
+
+tasks:
+  default:
+    desc: "Muestra las tareas disponibles"
+    cmds:
+      - task --list
+
+  backend:setup:
+    desc: "Crea el storage account y genera backend.hcl para Terraform"
+    cmds:
+      - |
+        echo "🚀 Creando backend de Terraform..."
+        # Generar nombre único para storage account
+        RANDOM_SUFFIX=$(openssl rand -hex 4 | tr '[:upper:]' '[:lower:]')
+        STORAGE_NAME="tfstatedsrp4${RANDOM_SUFFIX}"
+        echo "📦 Storage Account: ${STORAGE_NAME}"
+        
+        # Verificar autenticación y suscripción
+        if ! az account show &> /dev/null; then
+          echo "⚠️  Autenticando en Azure..."
+          az login
+        fi
+        
+        # Mostrar información de la suscripción activa
+        echo ""
+        echo "📋 Información de la suscripción:"
+        SUBSCRIPTION_INFO=$(az account show --query '{Name:name, SubscriptionId:id, State:state}' -o tsv 2>&1)
+        if [ $? -eq 0 ]; then
+          echo "$SUBSCRIPTION_INFO" | awk '{print "   " $0}'
+        else
+          echo "❌ Error: No se pudo obtener información de la suscripción"
+          echo "$SUBSCRIPTION_INFO"
+          exit 1
+        fi
+        echo ""
+        
+        # Verificar y registrar proveedores necesarios
+        echo "0️⃣ Verificando proveedores de Azure..."
+        STORAGE_PROVIDER=$(az provider show --namespace Microsoft.Storage --query "registrationState" -o tsv 2>/dev/null)
+        if [ "$STORAGE_PROVIDER" != "Registered" ]; then
+          if [ "$STORAGE_PROVIDER" = "Registering" ]; then
+            echo "   ⏳ El proveedor Microsoft.Storage se está registrando..."
+            echo "   Esperando a que termine (puede tomar 1-5 minutos)..."
+            az provider register --namespace Microsoft.Storage --wait
+          else
+            echo "   📝 Registrando proveedor Microsoft.Storage..."
+            az provider register --namespace Microsoft.Storage --wait
+          fi
+          
+          # Verificar que se registró correctamente
+          STORAGE_PROVIDER=$(az provider show --namespace Microsoft.Storage --query "registrationState" -o tsv 2>/dev/null)
+          if [ "$STORAGE_PROVIDER" = "Registered" ]; then
+            echo "✅ Proveedor Microsoft.Storage registrado"
+          else
+            echo "❌ Error: No se pudo registrar el proveedor Microsoft.Storage"
+            echo "   Estado actual: $STORAGE_PROVIDER"
+            exit 1
+          fi
+        else
+          echo "✅ Proveedor Microsoft.Storage ya está registrado"
+        fi
+        echo ""
+        
+        # Crear grupo de recursos
+        echo "1️⃣ Creando grupo de recursos..."
+        if az group show --name "{{.BACKEND_RG_NAME}}" &> /dev/null; then
+          echo "✅ Grupo de recursos ya existe"
+        else
+          if az group create \
+            --name "{{.BACKEND_RG_NAME}}" \
+            --location "{{.BACKEND_LOCATION}}" \
+            --output none; then
+            echo "✅ Grupo de recursos creado"
+          else
+            echo "❌ Error al crear el grupo de recursos"
+            exit 1
+          fi
+        fi
+        
+        # Crear storage account
+        echo "2️⃣ Creando storage account..."
+        if az storage account show --name "${STORAGE_NAME}" --resource-group "{{.BACKEND_RG_NAME}}" &> /dev/null; then
+          echo "✅ Storage account ya existe: ${STORAGE_NAME}"
+        else
+          if az storage account create \
+            --resource-group "{{.BACKEND_RG_NAME}}" \
+            --name "${STORAGE_NAME}" \
+            --sku Standard_LRS \
+            --encryption-services blob \
+            --location "{{.BACKEND_LOCATION}}" \
+            --allow-blob-public-access false \
+            --min-tls-version TLS1_2 \
+            --output none; then
+            echo "✅ Storage account creado: ${STORAGE_NAME}"
+          else
+            echo "❌ Error al crear el storage account"
+            exit 1
+          fi
+        fi
+        
+        sleep 5
+        
+        # Configurar seguridad
+        echo "3️⃣ Configurando seguridad..."
+        az storage account blob-service-properties update \
+          --account-name "${STORAGE_NAME}" \
+          --resource-group "{{.BACKEND_RG_NAME}}" \
+          --enable-versioning true \
+          --enable-delete-retention true \
+          --delete-retention-days 30 \
+          --output none
+        
+        # Crear container
+        echo "4️⃣ Creando container..."
+        az storage container create \
+          --name "{{.CONTAINER_NAME}}" \
+          --account-name "${STORAGE_NAME}" \
+          --auth-mode login \
+          --output none || echo "✅ Container ya existe"
+        
+        # Crear backend.hcl
+        echo "5️⃣ Creando backend.hcl..."
+        {
+          echo "resource_group_name  = \"{{.BACKEND_RG_NAME}}\""
+          echo "storage_account_name = \"${STORAGE_NAME}\""
+          echo "container_name       = \"{{.CONTAINER_NAME}}\""
+          echo "key                  = \"{{.KEY_NAME}}\""
+        } > backend.hcl
+        
+        echo ""
+        echo "✅ Backend creado exitosamente!"
+        echo "📝 Storage Account: ${STORAGE_NAME}"
+        echo ""
+        echo "💡 Siguiente paso:"
+        echo "   terraform init -backend-config=backend.hcl"
