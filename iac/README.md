@@ -1,11 +1,85 @@
 # Despliegue de AKS con Terraform
 
-Guía paso a paso (español) para crear un clúster de AKS desde cero, aplicar la infraestructura con Terraform y ejecutar comandos básicos de Kubernetes.
+Guía paso a paso para crear un clúster de AKS desde cero, aplicar la infraestructura con Terraform y ejecutar comandos básicos de Kubernetes.
 
 ## Requisitos previos
 - Suscripción de Azure con permisos para crear RG, VNet y AKS.
 - CLI instaladas: Azure CLI, Terraform (>=1.0) y kubectl.
 - Clave pública SSH (genera una con `ssh-keygen` si no tienes).
+
+## Ejemplo de `dsrp-values.tfvars`
+Guarda tus variables en `iac/dsrp-values.tfvars` (excluido de git) y ajusta los valores según tu entorno:
+```hcl
+# Grupo de recursos
+resource_group_name = "rg-aks-demo"
+location            = "East US"
+
+# Configuración del clúster
+cluster_name        = "aks-cluster-demo"
+dns_prefix          = "dsrp-mlops-demo"
+node_count          = 2
+vm_size             = "Standard_E2s_v3"
+kubernetes_version  = "1.32"
+
+# Configuración de red
+network_plugin            = "azure"
+network_policy            = "azure"
+vnet_address_space        = ["10.0.0.0/16"]
+aks_subnet_address_prefix = "10.0.1.0/24"
+
+# Auto-escalado
+enable_auto_scaling = true
+min_count           = 2
+max_count           = 5
+
+# Seguridad
+enable_rbac            = true
+enable_azure_policy    = true
+enable_azure_monitor   = true
+enable_private_cluster = false
+authorized_ip_ranges = [
+  "203.0.113.5/32", # API server (ajusta tus IPs)
+]
+
+# Acceso administrativo a apps/nodos
+admin_access_cidrs = [
+  "203.0.113.5/32", # IP pública para acceder a apps/nodos
+]
+
+# SSH Public Key
+ssh_public_key = "ssh-rsa AAAA... tu_llave_publica"
+
+# Log Analytics (opcional)
+log_analytics_workspace_name = null
+
+# Etiquetas
+tags = {
+  Environment = "Dev"
+  Project     = "Kubernetes"
+  ManagedBy   = "Terraform"
+  Course      = "MLE4"
+}
+```
+Cómo usarlo:
+1) Copia el bloque anterior en `iac/dsrp-values.tfvars`.
+2) Ajusta nombres (`resource_group_name`, `cluster_name`, `dns_prefix`), ubicación, tamaño/cantidad de nodos y CIDRs reales.
+3) Reemplaza `ssh_public_key` con tu clave pública (ej. `cat ~/.ssh/id_ed25519.pub`).
+4) Si usas Log Analytics, define `log_analytics_workspace_name`; adapta etiquetas a tu entorno.
+
+## Instalación de CLIs (macOS y Windows)
+### macOS (Homebrew)
+- Azure CLI: `brew update && brew install azure-cli`
+- Terraform: `brew tap hashicorp/tap && brew install hashicorp/tap/terraform`
+- kubectl: `brew install kubectl`
+- Task (Taskfile): `brew install go-task/tap/go-task`
+
+### Windows (winget)
+- Azure CLI: `winget install -e --id Microsoft.AzureCLI`
+- Terraform: `winget install -e --id HashiCorp.Terraform`
+- kubectl: `winget install -e --id Kubernetes.kubectl`
+- Task (Taskfile): `winget install -e --id GoTask.GoTask`
+
+Verifica con `az version`, `terraform version` y `kubectl version --client`.
 
 ## Preparación del proyecto
 1) Clona este repositorio y entra al directorio.
