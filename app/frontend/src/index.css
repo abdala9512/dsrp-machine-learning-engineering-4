@@ -1,0 +1,335 @@
+:root {
+  font-family: "Poppins", -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+  line-height: 1.6;
+  font-weight: 400;
+  color: #111827;
+  background-color: #ffffff;
+  --page-bg: #f3f4f6;
+  --panel-bg: #ffffff;
+  --panel-border: rgba(17, 24, 39, 0.08);
+  --accent: #111827;
+  --accent-secondary: #4b5563;
+  --accent-highlight: #f97316;
+  --muted: #6b7280;
+  --chip-bg: rgba(17, 24, 39, 0.06);
+  --chip-border: rgba(17, 24, 39, 0.12);
+  --card-border: rgba(17, 24, 39, 0.08);
+}
+
+* {
+  box-sizing: border-box;
+}
+
+body {
+  margin: 0;
+  background: var(--page-bg);
+  min-height: 100vh;
+}
+
+a {
+  color: inherit;
+}
+
+.layout {
+  min-height: 100vh;
+  display: flex;
+  flex-direction: column;
+  position: relative;
+}
+
+header {
+  background: #111827;
+  color: white;
+  padding: 2.4rem 2rem 2rem;
+  box-shadow: 0 18px 36px rgba(17, 24, 39, 0.18);
+  position: relative;
+  z-index: 1;
+}
+
+header h1 {
+  margin: 0 0 0.5rem;
+  font-size: 2.1rem;
+  font-weight: 700;
+  letter-spacing: 0.02em;
+}
+
+header .muted {
+  color: rgba(209, 213, 219, 0.82);
+  max-width: 580px;
+}
+
+main {
+  flex: 1;
+  padding: 2.5rem 2rem 3rem;
+  max-width: 1100px;
+  margin: 0 auto;
+  width: 100%;
+  position: relative;
+  z-index: 1;
+}
+
+.panel {
+  background: var(--panel-bg);
+  border: 1px solid var(--panel-border);
+  padding: 2rem;
+  border-radius: 1.5rem;
+  box-shadow: 0 20px 50px rgba(17, 24, 39, 0.08);
+  margin-bottom: 2.5rem;
+}
+
+.panel h2 {
+  margin-top: 0;
+  font-size: 1.35rem;
+  font-weight: 600;
+  color: #111827;
+}
+
+.panel-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 1rem;
+  margin-bottom: 1.25rem;
+}
+
+.search-form {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.85rem;
+  align-items: center;
+}
+
+.search-form input[type="text"] {
+  flex: 1;
+  min-width: 320px;
+  padding: 0.85rem 1.1rem;
+  border: 1px solid rgba(17, 24, 39, 0.12);
+  border-radius: 0.85rem;
+  font-size: 1rem;
+  background: #ffffff;
+  color: #111827;
+  transition: border 0.2s ease, box-shadow 0.2s ease;
+}
+
+.search-form input[type="text"]:focus {
+  outline: none;
+  border-color: rgba(17, 24, 39, 0.45);
+  box-shadow: 0 0 0 3px rgba(17, 24, 39, 0.15);
+}
+
+.search-form button {
+  background: linear-gradient(135deg, #111827, #374151);
+  color: white;
+  border: none;
+  border-radius: 0.85rem;
+  padding: 0.85rem 1.8rem;
+  font-size: 1rem;
+  cursor: pointer;
+  transition: transform 0.2s ease, box-shadow 0.2s ease;
+  font-weight: 600;
+}
+
+.search-form button:hover:not(:disabled) {
+  transform: translateY(-1px);
+  box-shadow: 0 16px 32px rgba(17, 24, 39, 0.25);
+}
+
+.search-form button:disabled {
+  background: rgba(156, 163, 175, 0.35);
+  cursor: not-allowed;
+}
+
+.grid {
+  display: grid;
+  grid-template-columns: repeat(4, minmax(0, 1fr));
+  gap: 1.75rem;
+}
+
+.card {
+  background: #ffffff;
+  border-radius: 1.25rem;
+  overflow: hidden;
+  box-shadow: 0 24px 36px rgba(17, 24, 39, 0.08);
+  display: flex;
+  flex-direction: column;
+  transition: transform 0.25s ease, box-shadow 0.25s ease;
+  border: 1px solid var(--card-border);
+  position: relative;
+}
+
+.card::after {
+  content: "";
+  position: absolute;
+  inset: 0;
+  background: linear-gradient(180deg, transparent 55%, rgba(17, 24, 39, 0.08) 100%);
+  opacity: 0;
+  transition: opacity 0.25s ease;
+  pointer-events: none;
+}
+
+.card:hover {
+  transform: translateY(-6px);
+  box-shadow: 0 36px 60px rgba(17, 24, 39, 0.15);
+}
+
+.card:hover::after {
+  opacity: 1;
+}
+
+.card img {
+  width: 100%;
+  height: 280px;
+  object-fit: cover;
+  background: #e5e7eb;
+}
+
+.card-content {
+  padding: 1.25rem 1.35rem 1.5rem;
+  display: flex;
+  flex-direction: column;
+  gap: 0.9rem;
+  position: relative;
+  z-index: 1;
+}
+
+.card-content h3 {
+  margin: 0;
+  font-size: 1.05rem;
+  font-weight: 600;
+  color: #111827;
+  line-height: 1.4;
+}
+
+.card-meta {
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+}
+
+.chip {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.35rem;
+  padding: 0.35rem 0.75rem;
+  border-radius: 999px;
+  background: var(--chip-bg);
+  border: 1px solid var(--chip-border);
+  font-size: 0.76rem;
+  letter-spacing: 0.02em;
+  color: rgba(17, 24, 39, 0.72);
+  text-transform: uppercase;
+}
+
+.chip-type {
+  background: rgba(17, 24, 39, 0.08);
+  border-color: rgba(17, 24, 39, 0.22);
+}
+
+.chip-year {
+  background: rgba(156, 163, 175, 0.12);
+  border-color: rgba(156, 163, 175, 0.28);
+}
+
+.card-footer {
+  margin-top: auto;
+}
+
+.rating-badge {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.5rem;
+  padding: 0.45rem 0.9rem;
+  border-radius: 999px;
+  background: rgba(249, 115, 22, 0.12);
+  border: 1px solid rgba(249, 115, 22, 0.35);
+  color: #b45309;
+}
+
+.rating-value {
+  font-size: 1.05rem;
+  font-weight: 700;
+}
+
+.rating-label {
+  font-size: 0.75rem;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+}
+
+.empty-state {
+  text-align: center;
+  color: rgba(75, 85, 99, 0.85);
+  padding: 2.5rem 1rem;
+  font-size: 0.95rem;
+}
+
+.muted {
+  color: var(--muted);
+  font-size: 0.87rem;
+}
+
+.badge {
+  background: rgba(17, 24, 39, 0.08);
+  color: #111827;
+  padding: 0.35rem 0.85rem;
+  border-radius: 999px;
+  font-size: 0.78rem;
+  font-weight: 600;
+  border: 1px solid rgba(17, 24, 39, 0.2);
+}
+
+.placeholder {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  height: 280px;
+  background: rgba(243, 244, 246, 0.6);
+  color: rgba(55, 65, 81, 0.65);
+  font-size: 0.95rem;
+  letter-spacing: 0.05em;
+}
+
+.error {
+  color: #dc2626;
+  margin-top: 0.75rem;
+}
+
+footer {
+  padding: 2rem;
+  text-align: center;
+  color: rgba(75, 85, 99, 0.85);
+  font-size: 0.85rem;
+  position: relative;
+  z-index: 1;
+}
+
+@media (max-width: 720px) {
+  header {
+    padding: 2rem 1.5rem 1.75rem;
+  }
+
+  main {
+    padding: 2rem 1.5rem 2.5rem;
+  }
+
+  .panel {
+    padding: 1.6rem;
+  }
+
+  .search-form {
+    flex-direction: column;
+    align-items: stretch;
+  }
+
+  .search-form input[type="text"] {
+    min-width: 100%;
+  }
+
+  .search-form button {
+    width: 100%;
+  }
+
+  .grid {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+}
