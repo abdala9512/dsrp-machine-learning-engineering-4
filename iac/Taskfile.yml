@@ -140,3 +140,41 @@ tasks:
         echo ""
         echo "💡 Siguiente paso:"
         echo "   terraform init -backend-config=backend.hcl"
+
+  dns:set-label:
+    desc: "Asigna un DNS label al public IP del Service (frontend) en AKS"
+    vars:
+      SERVICE_NAME: "frontend"
+      SERVICE_NS: "default"
+      DNS_LABEL: "dsrp-frontend"
+    cmds:
+      - |
+        set -euo pipefail
+        echo "🔎 Obteniendo IP del Service {{.SERVICE_NAME}} (ns {{.SERVICE_NS}})..."
+        IP=$(kubectl get svc "{{.SERVICE_NAME}}" -n "{{.SERVICE_NS}}" -o jsonpath='{.status.loadBalancer.ingress[0].ip}')
+        if [ -z "$IP" ]; then
+          echo "❌ No se encontró IP pública en el Service. ¿El LoadBalancer ya está aprovisionado?"
+          exit 1
+        fi
+        echo "🌐 IP: $IP"
+
+        echo "🔎 Buscando el recurso Public IP en Azure..."
+        read RG NAME <<<"$(az network public-ip list --query "[?ipAddress=='$IP'].[resourceGroup,name]" -o tsv | head -n1)"
+        if [ -z "${RG:-}" ] || [ -z "${NAME:-}" ]; then
+          echo "❌ No se encontró el Public IP $IP en Azure. Verifica la suscripción/resource group."
+          exit 1
+        fi
+        echo "🗂️  RG: $RG | IP name: $NAME"
+
+        echo "🏷️  Asignando DNS label: {{.DNS_LABEL}}..."
+        az network public-ip update \
+          --resource-group "$RG" \
+          --name "$NAME" \
+          --dns-name "{{.DNS_LABEL}}" \
+          --output none
+
+        FQDN=$(az network public-ip show \
+          --resource-group "$RG" \
+          --name "$NAME" \
+          --query "dnsSettings.fqdn" -o tsv)
+        echo "✅ Listo. FQDN: $FQDN"
