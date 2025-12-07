@@ -126,6 +126,20 @@ Opciones para configurar kubectl:
 # B) Descargar credenciales con Azure CLI:
 az aks get-credentials --resource-group <rg> --name <cluster> --admin --overwrite-existing
 
+# C) Usar la salida de Terraform:
+#  - Si es YAML directo:
+terraform output -raw kube_config > ~/.kube/config-aks
+chmod 600 ~/.kube/config-aks
+export KUBECONFIG=~/.kube/config-aks
+
+#  - Si es base64 (kube_config_raw):
+terraform output -raw kube_config_raw | base64 --decode > ~/.kube/config-aks
+chmod 600 ~/.kube/config-aks
+export KUBECONFIG=~/.kube/config-aks
+
+#  - Si tienes kube_config_path:
+export KUBECONFIG=$(terraform output -raw kube_config_path)
+
 # Validar
 kubectl get nodes
 kubectl get pods -A
@@ -153,41 +167,3 @@ Si es un entorno temporal: `terraform destroy -var-file=dsrp-values.tfvars`. Est
 - Mantén `admin_access_cidrs` con el mínimo de IPs necesarias; abre todos los puertos hacia tus apps/nodos.
 - Si activas clúster privado, prepara DNS/peering antes de aplicar.
 - Usa workspaces o ramas para aislar cambios en entornos múltiples.
-
-## Desplegar el frontend y backend en AKS
-Pasos resumidos para llevar las imágenes a un registro y aplicar los manifiestos incluidos en `app/k8s/manifest.yaml` (Namespace, Secret placeholder, Deployments + Services).
-
-### 1) Construir y publicar imágenes
-Elige tu registro (ej. ACR). Ejemplo con Azure Container Registry:
-```bash
-ACR_NAME="<tu_acr>"
-az acr login --name $ACR_NAME
-
-# Backend
-docker build -t $ACR_NAME.azurecr.io/dsrpflix-backend:latest app/backend
-docker push $ACR_NAME.azurecr.io/dsrpflix-backend:latest
-
-# Frontend (si quieres que use el backend interno, compila con VITE_IMDB_API_BASE_URL=http://backend.dsrpflix.svc.cluster.local:8000)
-docker build \
-  --build-arg VITE_IMDB_API_BASE_URL=http://backend.dsrpflix.svc.cluster.local:8000 \
-  -t $ACR_NAME.azurecr.io/dsrpflix-frontend:latest app/frontend
-docker push $ACR_NAME.azurecr.io/dsrpflix-frontend:latest
-```
-
-### 2) Actualizar manifest con tus imágenes y API key
-Edita `app/k8s/manifest.yaml` y reemplaza:
-- `REPLACE_WITH_REGISTRY/backend:latest` -> imagen real (ej. `$ACR_NAME.azurecr.io/dsrpflix-backend:latest`)
-- `REPLACE_WITH_REGISTRY/frontend:latest` -> imagen real
-- `REPLACE_WITH_IMDB_API_KEY` -> tu API key (o crea/actualiza el Secret manualmente).
-
-### 3) Aplicar manifiestos
-```bash
-kubectl apply -f app/k8s/manifest.yaml
-kubectl get pods -n dsrpflix
-kubectl get svc -n dsrpflix
-```
-El Service `frontend` es tipo LoadBalancer; obtén la IP/hostname público desde `kubectl get svc -n dsrpflix frontend`.
-
-### 4) Validar
-- Backend health: `kubectl -n dsrpflix run tmp --rm -it --image=curlimages/curl --command -- sh -c "curl -v backend:8000/health"`
-- Frontend: abre la IP del LoadBalancer en el navegador. Si compilaste el frontend apuntando al backend interno, las búsquedas usarán el servicio en AKS; de lo contrario, usará la API pública por defecto.
