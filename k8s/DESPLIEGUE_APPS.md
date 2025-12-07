@@ -20,6 +20,13 @@ kubectl apply -f k8s/frontend.yaml
 kubectl get pods
 kubectl get svc frontend
 ```
-5) Abre la IP/hostname del servicio `frontend` en el navegador.
+5) (Opcional) Asigna un hostname con DNS label en el public IP:
+```bash
+cd iac
+task dns:set-label SERVICE_NAME=frontend SERVICE_NS=default DNS_LABEL=dsrp-frontend
+```
+Esto genera un FQDN tipo `<DNS_LABEL>.<region>.cloudapp.azure.com`.
+
+6) Abre la IP/hostname del servicio `frontend` en el navegador.
 
 > Nota: ajusta `replicas`, recursos y namespace en `k8s/frontend.yaml` según tu entorno.
