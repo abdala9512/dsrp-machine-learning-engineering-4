@@ -103,12 +103,6 @@ variable "tags" {
   default     = {}
 }
 
-variable "ssh_public_key" {
-  description = "Clave pública SSH para acceso a los nodos"
-  type        = string
-  sensitive   = true
-}
-
 variable "log_analytics_workspace_name" {
   description = "Nombre del workspace de Log Analytics"
   type        = string

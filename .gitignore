@@ -1,5 +1,15 @@
 *.gz
 .env
+.DS_Store
+
+# data
+*.tsv
+*.npy
+*.ann
+
+# embeddings
+qdrant_data/
+qdrant_storage/
 
 # Terraform vars
 *.tfvars
