@@ -1,0 +1,88 @@
+# Flyte Sandbox - Valores personalizados para AKS
+# Este archivo sobrescribe los valores por defecto para un despliegue educativo
+#
+# Uso:
+#   helm install flyte-sandbox flyteorg/flyte-sandbox \
+#     --namespace flyte \
+#     --values flyte-sandbox-values.yaml
+
+# Servicio principal de Flyte expuesto como LoadBalancer
+flyte-binary:
+  service:
+    type: LoadBalancer
+    annotations:
+      # Para Azure: asignar DNS label automaticamente
+      # service.beta.kubernetes.io/azure-dns-label-name: flyte-sandbox
+    ports:
+      http: 8088
+      grpc: 8089
+
+  # Recursos ajustados para nodos Standard_B2s
+  resources:
+    requests:
+      cpu: 500m
+      memory: 1Gi
+    limits:
+      cpu: 1500m
+      memory: 3Gi
+
+  # Configuracion de tareas por defecto
+  configuration:
+    inline:
+      task_resources:
+        defaults:
+          cpu: 200m
+          memory: 512Mi
+        limits:
+          cpu: 1000m
+          memory: 2Gi
+
+      # Plugins de logging
+      plugins:
+        logs:
+          kubernetes-enabled: true
+          cloudwatch-enabled: false
+          stackdriver-enabled: false
+
+# PostgreSQL con recursos limitados
+postgresql:
+  enabled: true
+  primary:
+    resources:
+      requests:
+        cpu: 100m
+        memory: 256Mi
+      limits:
+        cpu: 500m
+        memory: 512Mi
+    persistence:
+      enabled: true
+      size: 2Gi
+
+# MinIO con recursos limitados
+minio:
+  enabled: true
+  resources:
+    requests:
+      cpu: 100m
+      memory: 256Mi
+    limits:
+      cpu: 500m
+      memory: 512Mi
+  persistence:
+    enabled: true
+    size: 5Gi
+
+# Deshabilitar componentes opcionales para reducir recursos
+kubernetes-dashboard:
+  enabled: false
+
+docker-registry:
+  enabled: false
+
+buildkit:
+  enabled: false
+
+# Configuracion de webhook
+flyte-binary-webhook:
+  enabled: true
