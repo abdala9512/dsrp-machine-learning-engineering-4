@@ -5,6 +5,7 @@ vars:
   BACKEND_LOCATION: "East US"
   CONTAINER_NAME: "tfstate"
   KEY_NAME: "mlops-dsrp4.terraform.tfstate"
+  TFVARS_FILE: "dsrp-values.tfvars"
 
 tasks:
   default:
@@ -16,6 +17,18 @@ tasks:
     desc: "Crea el storage account y genera backend.hcl para Terraform"
     cmds:
       - |
+        echo "🧹 Limpiando estado local de Terraform..."
+        if [ -d ".terraform" ]; then
+          rm -rf .terraform
+          echo "✅ Carpeta .terraform eliminada"
+        else
+          echo "ℹ️  No existe carpeta .terraform"
+        fi
+        if [ -f ".terraform.lock.hcl" ]; then
+          rm -f .terraform.lock.hcl
+          echo "✅ Archivo .terraform.lock.hcl eliminado"
+        fi
+        echo ""
         echo "🚀 Creando backend de Terraform..."
         # Generar nombre único para storage account
         RANDOM_SUFFIX=$(openssl rand -hex 4 | tr '[:upper:]' '[:lower:]')
@@ -141,40 +154,272 @@ tasks:
         echo "💡 Siguiente paso:"
         echo "   terraform init -backend-config=backend.hcl"
 
-  dns:set-label:
-    desc: "Asigna un DNS label al public IP del Service (frontend) en AKS"
+  aks:ip-access:
+    desc: "Configura las IPs autorizadas para acceder al cluster AKS"
+    summary: |
+      Configura authorized_ip_ranges y admin_access_cidrs en el tfvars.
+
+      Uso:
+        task aks:ip-access MODE=open           # Abre acceso a todo internet (0.0.0.0/0)
+        task aks:ip-access MODE=current        # Usa tu IP pública actual (auto-detectada)
+        task aks:ip-access MODE=ips IPS="1.2.3.4,5.6.7.8"  # IPs específicas
+
+      Después de ejecutar, aplica los cambios:
+        terraform plan -var-file={{.TFVARS_FILE}}
+        terraform apply -var-file={{.TFVARS_FILE}}
     vars:
-      SERVICE_NAME: "frontend"
-      SERVICE_NS: "default"
-      DNS_LABEL: "dsrp-frontend"
+      MODE: '{{.MODE | default "current"}}'
+      IPS: '{{.IPS | default ""}}'
     cmds:
       - |
         set -euo pipefail
-        echo "🔎 Obteniendo IP del Service {{.SERVICE_NAME}} (ns {{.SERVICE_NS}})..."
-        IP=$(kubectl get svc "{{.SERVICE_NAME}}" -n "{{.SERVICE_NS}}" -o jsonpath='{.status.loadBalancer.ingress[0].ip}')
+
+        MODE="{{.MODE}}"
+        IPS="{{.IPS}}"
+        TFVARS="{{.TFVARS_FILE}}"
+
+        echo ""
+        echo "🔧 Configurando acceso IP al cluster AKS"
+        echo "   Modo: $MODE"
+        echo "   Archivo: $TFVARS"
+        echo ""
+
+        # Determinar las IPs a configurar
+        case "$MODE" in
+          open)
+            echo "⚠️  ADVERTENCIA: Abriendo acceso a TODO internet (0.0.0.0/0)"
+            echo "   Esto es inseguro para producción. Usar solo temporalmente."
+            echo ""
+            IP_LIST='["0.0.0.0/0"]'
+            ;;
+          current)
+            echo "🔎 Detectando tu IP pública actual..."
+            CURRENT_IP=$(curl -s https://api.ipify.org || curl -s https://ifconfig.me || curl -s https://icanhazip.com)
+            if [ -z "$CURRENT_IP" ]; then
+              echo "❌ No se pudo detectar la IP pública"
+              exit 1
+            fi
+            echo "✅ Tu IP actual: $CURRENT_IP"
+            IP_LIST="[\"${CURRENT_IP}/32\"]"
+            ;;
+          ips)
+            if [ -z "$IPS" ]; then
+              echo "❌ Error: MODE=ips requiere IPS=\"ip1,ip2,...\""
+              exit 1
+            fi
+            echo "📋 IPs proporcionadas: $IPS"
+            # Convertir lista separada por comas a formato Terraform
+            IP_LIST="["
+            FIRST=true
+            IFS=',' read -ra IP_ARRAY <<< "$IPS"
+            for ip in "${IP_ARRAY[@]}"; do
+              ip=$(echo "$ip" | xargs)  # trim whitespace
+              # Agregar /32 si no tiene CIDR
+              if [[ ! "$ip" =~ "/" ]]; then
+                ip="${ip}/32"
+              fi
+              if [ "$FIRST" = true ]; then
+                IP_LIST="${IP_LIST}\"${ip}\""
+                FIRST=false
+              else
+                IP_LIST="${IP_LIST}, \"${ip}\""
+              fi
+            done
+            IP_LIST="${IP_LIST}]"
+            ;;
+          *)
+            echo "❌ Modo no válido: $MODE"
+            echo "   Opciones: open, current, ips"
+            exit 1
+            ;;
+        esac
+
+        echo ""
+        echo "📝 Configuración a aplicar:"
+        echo "   authorized_ip_ranges = $IP_LIST"
+        echo "   admin_access_cidrs   = $IP_LIST"
+        echo ""
+
+        # Backup del archivo original
+        cp "$TFVARS" "${TFVARS}.backup"
+        echo "💾 Backup creado: ${TFVARS}.backup"
+
+        # Actualizar authorized_ip_ranges usando awk
+        awk -v ips="$IP_LIST" '
+          /^authorized_ip_ranges[[:space:]]*=/ {
+            print "authorized_ip_ranges = " ips
+            # Skip lines until we find the closing bracket
+            while (getline && !/^\]/) {}
+            next
+          }
+          /^admin_access_cidrs[[:space:]]*=/ {
+            print "admin_access_cidrs = " ips
+            # Skip lines until we find the closing bracket
+            while (getline && !/^\]/) {}
+            next
+          }
+          { print }
+        ' "${TFVARS}.backup" > "$TFVARS"
+
+        echo ""
+        echo "✅ Archivo $TFVARS actualizado"
+        echo ""
+        echo "📋 Valores actuales:"
+        grep -A1 "authorized_ip_ranges\|admin_access_cidrs" "$TFVARS" | head -6
+        echo ""
+        echo "💡 Próximos pasos:"
+        echo "   1. terraform plan -var-file=$TFVARS"
+        echo "   2. terraform apply -var-file=$TFVARS"
+        echo ""
+        if [ "$MODE" = "open" ]; then
+          echo "⚠️  RECUERDA: Cierra el acceso después de terminar:"
+          echo "   task aks:ip-access MODE=current"
+        fi
+
+  aks:my-ip:
+    desc: "Muestra tu IP pública actual"
+    cmds:
+      - |
+        echo "🔎 Detectando tu IP pública..."
+        IP=$(curl -s https://api.ipify.org || curl -s https://ifconfig.me || curl -s https://icanhazip.com)
         if [ -z "$IP" ]; then
-          echo "❌ No se encontró IP pública en el Service. ¿El LoadBalancer ya está aprovisionado?"
+          echo "❌ No se pudo detectar la IP"
           exit 1
         fi
-        echo "🌐 IP: $IP"
+        echo ""
+        echo "🌐 Tu IP pública actual: $IP"
+        echo ""
+        echo "Para actualizar el tfvars con esta IP:"
+        echo "   task aks:ip-access MODE=current"
 
-        echo "🔎 Buscando el recurso Public IP en Azure..."
-        read RG NAME <<<"$(az network public-ip list --query "[?ipAddress=='$IP'].[resourceGroup,name]" -o tsv | head -n1)"
-        if [ -z "${RG:-}" ] || [ -z "${NAME:-}" ]; then
-          echo "❌ No se encontró el Public IP $IP en Azure. Verifica la suscripción/resource group."
+  dns:set-label:
+    desc: "Asigna un DNS label al public IP de un Service LoadBalancer en AKS"
+    summary: |
+      Uso: task dns:set-label SERVICE=<nombre> [NS=<namespace>] LABEL=<dns-label>
+
+      Ejemplos:
+        task dns:set-label SERVICE=frontend LABEL=dsrp-frontend
+        task dns:set-label SERVICE=qdrant NS=default LABEL=qdrant-dsrp
+        task dns:set-label SERVICE=flyte-flyte-binary NS=flyte LABEL=flyte-dsrp
+    vars:
+      SERVICE: '{{.SERVICE | default ""}}'
+      NS: '{{.NS | default "default"}}'
+      LABEL: '{{.LABEL | default ""}}'
+    preconditions:
+      - sh: '[ -n "{{.SERVICE}}" ]'
+        msg: "Error: SERVICE es requerido. Uso: task dns:set-label SERVICE=<nombre> LABEL=<dns-label>"
+      - sh: '[ -n "{{.LABEL}}" ]'
+        msg: "Error: LABEL es requerido. Uso: task dns:set-label SERVICE=<nombre> LABEL=<dns-label>"
+      - sh: command -v kubectl &> /dev/null
+        msg: "Error: kubectl no está instalado o no está en el PATH"
+      - sh: command -v az &> /dev/null
+        msg: "Error: Azure CLI (az) no está instalado o no está en el PATH"
+    cmds:
+      - |
+        set -euo pipefail
+
+        SERVICE_NAME="{{.SERVICE}}"
+        SERVICE_NS="{{.NS}}"
+        DNS_LABEL="{{.LABEL}}"
+
+        echo ""
+        echo "🔧 Configuración:"
+        echo "   Service:   $SERVICE_NAME"
+        echo "   Namespace: $SERVICE_NS"
+        echo "   DNS Label: $DNS_LABEL"
+        echo ""
+
+        # Verificar que el service existe
+        echo "🔎 Verificando Service..."
+        if ! kubectl get svc "$SERVICE_NAME" -n "$SERVICE_NS" &> /dev/null; then
+          echo "❌ El Service '$SERVICE_NAME' no existe en el namespace '$SERVICE_NS'"
+          echo ""
+          echo "Services disponibles en '$SERVICE_NS':"
+          kubectl get svc -n "$SERVICE_NS" --no-headers 2>/dev/null | awk '{print "   - " $1}' || echo "   (ninguno)"
           exit 1
         fi
-        echo "🗂️  RG: $RG | IP name: $NAME"
 
-        echo "🏷️  Asignando DNS label: {{.DNS_LABEL}}..."
-        az network public-ip update \
+        # Verificar tipo de service
+        SVC_TYPE=$(kubectl get svc "$SERVICE_NAME" -n "$SERVICE_NS" -o jsonpath='{.spec.type}')
+        if [ "$SVC_TYPE" != "LoadBalancer" ]; then
+          echo "❌ El Service '$SERVICE_NAME' es tipo '$SVC_TYPE', debe ser 'LoadBalancer'"
+          exit 1
+        fi
+
+        # Obtener IP del LoadBalancer
+        echo "🔎 Obteniendo IP del LoadBalancer..."
+        IP=""
+        RETRIES=0
+        MAX_RETRIES=12  # 2 minutos máximo
+
+        while [ -z "$IP" ] && [ $RETRIES -lt $MAX_RETRIES ]; do
+          IP=$(kubectl get svc "$SERVICE_NAME" -n "$SERVICE_NS" -o jsonpath='{.status.loadBalancer.ingress[0].ip}' 2>/dev/null || echo "")
+          if [ -z "$IP" ]; then
+            RETRIES=$((RETRIES + 1))
+            echo "   ⏳ Esperando IP pública... (intento $RETRIES/$MAX_RETRIES)"
+            sleep 10
+          fi
+        done
+
+        if [ -z "$IP" ]; then
+          echo "❌ No se pudo obtener la IP pública después de $MAX_RETRIES intentos"
+          echo "   Verifica el estado del LoadBalancer:"
+          echo "   kubectl describe svc $SERVICE_NAME -n $SERVICE_NS"
+          exit 1
+        fi
+        echo "✅ IP encontrada: $IP"
+
+        # Buscar el recurso Public IP en Azure
+        echo ""
+        echo "🔎 Buscando recurso Public IP en Azure..."
+
+        # Obtener RG y nombre del Public IP
+        RESULT=$(az network public-ip list --query "[?ipAddress=='$IP'].[resourceGroup,name]" -o tsv 2>/dev/null | head -n1)
+
+        if [ -z "$RESULT" ]; then
+          echo "❌ No se encontró el Public IP '$IP' en Azure"
+          echo ""
+          echo "Posibles causas:"
+          echo "   - La suscripción de Azure no es la correcta"
+          echo "   - El Public IP fue creado en otra suscripción"
+          echo ""
+          echo "Suscripción actual:"
+          az account show --query '{Name:name, Id:id}' -o table
+          exit 1
+        fi
+
+        RG=$(echo "$RESULT" | awk '{print $1}')
+        NAME=$(echo "$RESULT" | awk '{print $2}')
+
+        echo "✅ Recurso encontrado:"
+        echo "   Resource Group: $RG"
+        echo "   Public IP Name: $NAME"
+
+        # Asignar DNS label
+        echo ""
+        echo "🏷️  Asignando DNS label '$DNS_LABEL'..."
+        if ! az network public-ip update \
           --resource-group "$RG" \
           --name "$NAME" \
-          --dns-name "{{.DNS_LABEL}}" \
-          --output none
+          --dns-name "$DNS_LABEL" \
+          --output none 2>&1; then
+          echo "❌ Error al asignar el DNS label"
+          echo "   Puede que el label '$DNS_LABEL' ya esté en uso en la región"
+          exit 1
+        fi
 
+        # Mostrar FQDN resultante
         FQDN=$(az network public-ip show \
           --resource-group "$RG" \
           --name "$NAME" \
           --query "dnsSettings.fqdn" -o tsv)
-        echo "✅ Listo. FQDN: $FQDN"
+
+        echo ""
+        echo "✅ ¡DNS configurado exitosamente!"
+        echo ""
+        echo "📋 Resumen:"
+        echo "   IP:   $IP"
+        echo "   FQDN: $FQDN"
+        echo ""
+        echo "🌐 Puedes acceder al servicio en:"
+        echo "   http://$FQDN"

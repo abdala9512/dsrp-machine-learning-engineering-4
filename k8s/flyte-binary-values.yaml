@@ -1,0 +1,118 @@
+# Flyte Binary - Valores para AKS
+# Requiere: flyte-deps.yaml desplegado previamente
+#
+# Uso:
+#   kubectl apply -f k8s/flyte-namespace.yaml
+#   kubectl apply -f k8s/flyte-deps.yaml
+#   helm install flyte flyteorg/flyte-binary -n flyte -f k8s/flyte-binary-values.yaml
+
+# Configuracion de imagen
+image:
+  repository: cr.flyte.org/flyteorg/flyte-binary
+  tag: latest
+  pullPolicy: IfNotPresent
+
+# Servicio expuesto como LoadBalancer
+service:
+  type: LoadBalancer
+  ports:
+    http: 8088
+    grpc: 8089
+
+# Recursos para el pod principal
+resources:
+  requests:
+    cpu: 500m
+    memory: 1Gi
+  limits:
+    cpu: 2
+    memory: 2Gi
+
+# Configuracion principal de Flyte
+configuration:
+  # Base de datos PostgreSQL
+  database:
+    postgres:
+      enabled: true
+      host: flyte-postgresql.flyte.svc.cluster.local
+      port: 5432
+      dbname: flyte
+      username: flyte
+      password: flyte123
+
+  # Almacenamiento S3 (MinIO)
+  storage:
+    metadataContainer: flyte-data
+    userDataContainer: flyte-data
+    provider: s3
+    providerConfig:
+      s3:
+        region: us-east-1
+        endpoint: http://flyte-minio.flyte.svc.cluster.local:9000
+        disableSSL: true
+        v2Signing: true
+        authType: accesskey
+        accessKey: minio
+        secretKey: miniostorage
+
+  # Configuracion inline
+  inline:
+    # Cluster resources
+    cluster_resources:
+      refreshInterval: 5m
+      templatePath: /etc/flyte/clusterresource/templates
+      customData:
+        - production:
+            - defaultIamRole:
+                value: ""
+        - staging:
+            - defaultIamRole:
+                value: ""
+        - development:
+            - defaultIamRole:
+                value: ""
+
+    # Recursos por defecto para tareas
+    task_resources:
+      defaults:
+        cpu: 200m
+        memory: 256Mi
+      limits:
+        cpu: 1000m
+        memory: 1Gi
+
+    # Plugins
+    plugins:
+      logs:
+        kubernetes-enabled: true
+        cloudwatch-enabled: false
+        stackdriver-enabled: false
+
+    # Admin
+    admin:
+      endpoint: localhost:8089
+      insecure: true
+
+# RBAC
+rbac:
+  create: true
+
+# Service Account
+serviceAccount:
+  create: true
+  name: flyte
+
+# Cluster resource sync
+clusterResourceTemplates:
+  inline:
+    001_namespace.yaml: |
+      apiVersion: v1
+      kind: Namespace
+      metadata:
+        name: '{{ namespace }}'
+    002_serviceaccount.yaml: |
+      apiVersion: v1
+      kind: ServiceAccount
+      metadata:
+        name: default
+        namespace: '{{ namespace }}'

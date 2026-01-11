@@ -23,7 +23,7 @@ kubectl get svc frontend
 5) (Opcional) Asigna un hostname con DNS label en el public IP:
 ```bash
 cd iac
-task dns:set-label SERVICE_NAME=frontend SERVICE_NS=default DNS_LABEL=dsrp-frontend
+task dns:set-label SERVICE=frontend LABEL=dsrp-frontend
 ```
 Esto genera un FQDN tipo `<DNS_LABEL>.<region>.cloudapp.azure.com`.
 
@@ -33,9 +33,102 @@ Esto genera un FQDN tipo `<DNS_LABEL>.<region>.cloudapp.azure.com`.
 
 ---
 
+## Despliegue de Qdrant (Vector Database)
+
+Qdrant es una base de datos vectorial para búsqueda semántica y recomendaciones. El despliegue incluye almacenamiento persistente.
+
+### Puertos expuestos
+- **6333**: REST API y Dashboard web
+- **6334**: gRPC API (para clientes de alto rendimiento)
+
+### Instalación
+
+1) Aplica el manifiesto:
+```bash
+kubectl apply -f k8s/qdrant.yaml
+```
+
+2) Verifica que el pod y el PVC estén correctos:
+```bash
+kubectl get pods -l app=qdrant
+kubectl get pvc qdrant-storage
+```
+
+3) Obtener la IP pública del servicio:
+```bash
+kubectl get svc qdrant
+```
+
+4) Asigna un DNS label para evitar usar la IP directamente:
+```bash
+cd iac
+task dns:set-label SERVICE=qdrant LABEL=qdrant-dsrp
+```
+Esto genera un FQDN tipo `qdrant-dsrp.<region>.cloudapp.azure.com`.
+
+### Acceso
+
+- **Dashboard web**: `http://<FQDN>:6333/dashboard`
+- **REST API**: `http://<FQDN>:6333`
+- **gRPC**: `<FQDN>:6334`
+
+Para acceso local via port-forward:
+```bash
+kubectl port-forward svc/qdrant 6333:6333 6334:6334
+# Dashboard: http://localhost:6333/dashboard
+```
+
+### Conexión desde Python
+
+```python
+from qdrant_client import QdrantClient
+
+# Usando el DNS label
+client = QdrantClient(
+    host="qdrant-dsrp.<region>.cloudapp.azure.com",
+    port=6333,
+    # grpc_port=6334,  # Para conexión gRPC
+    # prefer_grpc=True,
+)
+
+# Verificar conexión
+print(client.get_collections())
+```
+
+### Configuración de recursos
+
+El manifiesto actual solicita:
+- CPU: 200m (request) / 1000m (limit)
+- Memoria: 512Mi (request) / 2Gi (limit)
+- Almacenamiento: 10Gi (PVC)
+
+Para ajustar, edita `k8s/qdrant.yaml` según tus necesidades.
+
+### Troubleshooting
+
+- **Pod en Pending**: Verificar que el PVC se haya aprovisionado
+  ```bash
+  kubectl describe pvc qdrant-storage
+  ```
+
+- **Pod reiniciando**: Verificar logs y eventos
+  ```bash
+  kubectl logs -l app=qdrant
+  kubectl describe pod -l app=qdrant
+  ```
+
+- **Conexión rechazada**: Verificar que el LoadBalancer tenga IP asignada
+  ```bash
+  kubectl get svc qdrant -o wide
+  ```
+
+> Nota: Los datos persisten en un Azure Disk. Si eliminas el PVC, los datos se perderán.
+
+---
+
 ## Despliegue de Flyte (ML Pipelines)
 
-Flyte es una plataforma para orquestar workflows de Machine Learning. Aquí usamos el chart `flyte-sandbox` para un despliegue educativo.
+Flyte es una plataforma para orquestar workflows de Machine Learning. Usamos el chart `flyte-binary` con PostgreSQL y MinIO desplegados manualmente.
 
 ### Prerrequisitos
 - Cluster AKS configurado y accesible via `kubectl`
@@ -55,42 +148,54 @@ helm repo update
 kubectl apply -f k8s/flyte-namespace.yaml
 ```
 
-3) Instalar Flyte Sandbox con los valores personalizados:
+3) Desplegar las dependencias (PostgreSQL + MinIO):
 ```bash
-helm install flyte-sandbox flyteorg/flyte-sandbox \
+kubectl apply -f k8s/flyte-deps.yaml
+```
+
+4) Esperar a que las dependencias estén listas:
+```bash
+kubectl get pods -n flyte -w
+# Esperar hasta que flyte-postgresql y flyte-minio estén Running
+# El job flyte-minio-init debe estar Completed
+```
+
+5) Instalar Flyte Binary con Helm:
+```bash
+helm install flyte flyteorg/flyte-binary \
     --namespace flyte \
-    --values k8s/flyte-sandbox-values.yaml \
+    --values k8s/flyte-binary-values.yaml \
     --timeout 10m
 ```
 
-4) Verificar que todos los pods estén corriendo:
+6) Verificar que todos los pods estén corriendo:
 ```bash
 kubectl get pods -n flyte
 ```
 Esperar hasta que todos los pods estén en estado `Running`:
-- `flyte-sandbox-*` (servidor principal)
-- `flyte-sandbox-postgresql-*` (base de datos)
-- `flyte-sandbox-minio-*` (almacenamiento)
+- `flyte-flyte-binary-*` (servidor principal)
+- `flyte-postgresql-*` (base de datos)
+- `flyte-minio-*` (almacenamiento)
 
-5) Obtener la IP pública del servicio:
+7) Obtener la IP pública del servicio:
 ```bash
-kubectl get svc -n flyte flyte-sandbox-flyte-binary
+kubectl get svc -n flyte flyte-flyte-binary
 ```
 
-6) (Opcional) Asignar un DNS label:
+8) (Opcional) Asignar un DNS label:
 ```bash
 cd iac
-task dns:set-label SERVICE_NAME=flyte-sandbox-flyte-binary SERVICE_NS=flyte DNS_LABEL=flyte-dsrp
+task dns:set-label SERVICE=flyte-flyte-binary NS=flyte LABEL=flyte-dsrp
 ```
 
 ### Acceso a la consola de Flyte
 
 Una vez desplegado, accede a la consola web de Flyte:
-- **URL**: `http://<IP_PUBLICA>:8088` o `http://<DNS_LABEL>.<region>.cloudapp.azure.com:8088`
+- **URL**: `http://<IP_PUBLICA>:8088/console` o `http://<DNS_LABEL>.<region>.cloudapp.azure.com:8088/console`
 
 Para acceso local via port-forward:
 ```bash
-kubectl port-forward svc/flyte-sandbox-flyte-binary 8088:8088 -n flyte
+kubectl port-forward svc/flyte-flyte-binary 8088:8088 -n flyte
 # Acceder en: http://localhost:8088/console
 ```
 
@@ -113,7 +218,7 @@ from flytekit.configuration import Config
 remote = FlyteRemote(
     config=Config.for_endpoint(
         endpoint="<IP_PUBLICA>:8089",  # Puerto gRPC
-        insecure=True  # Para sandbox sin SSL
+        insecure=True
     ),
     default_project="flytesnacks",
     default_domain="development",
@@ -124,7 +229,8 @@ remote = FlyteRemote(
 
 Para eliminar Flyte del cluster:
 ```bash
-helm uninstall flyte-sandbox -n flyte
+helm uninstall flyte -n flyte
+kubectl delete -f k8s/flyte-deps.yaml
 kubectl delete namespace flyte
 ```
 
