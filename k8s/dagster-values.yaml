@@ -1,0 +1,121 @@
+# Dagster Helm Chart - Valores para AKS
+# Documentacion: https://docs.dagster.io/deployment/guides/kubernetes/deploying-with-helm
+#
+# Uso:
+#   helm repo add dagster https://dagster-io.github.io/helm
+#   helm install dagster dagster/dagster -n dagster -f k8s/dagster-values.yaml
+
+# Configuracion global
+global:
+  serviceAccountName: dagster
+
+# Dagster Webserver (UI)
+dagsterWebserver:
+  replicaCount: 1
+  image:
+    repository: docker.io/dagster/dagster-celery-k8s
+    tag: latest
+    pullPolicy: IfNotPresent
+
+  service:
+    type: LoadBalancer
+    port: 80
+
+  resources:
+    requests:
+      cpu: 200m
+      memory: 512Mi
+    limits:
+      cpu: 500m
+      memory: 1Gi
+
+# Dagster Daemon (scheduler, sensors, run monitoring)
+dagsterDaemon:
+  enabled: true
+  image:
+    repository: docker.io/dagster/dagster-celery-k8s
+    tag: latest
+    pullPolicy: IfNotPresent
+
+  resources:
+    requests:
+      cpu: 200m
+      memory: 512Mi
+    limits:
+      cpu: 500m
+      memory: 1Gi
+
+# PostgreSQL (incluido en el chart)
+postgresql:
+  enabled: true
+  image:
+    pullPolicy: IfNotPresent
+  auth:
+    username: dagster
+    password: dagster123
+    database: dagster
+  primary:
+    persistence:
+      enabled: true
+      size: 5Gi
+    resources:
+      requests:
+        cpu: 100m
+        memory: 256Mi
+      limits:
+        cpu: 500m
+        memory: 512Mi
+
+# Run Launcher - usa K8s Jobs para ejecutar pipelines
+runLauncher:
+  type: K8sRunLauncher
+  config:
+    k8sRunLauncher:
+      envConfigMaps: []
+      envSecrets: []
+      jobNamespace: dagster
+      loadInclusterConfig: true
+      imagePullPolicy: IfNotPresent
+      resources:
+        requests:
+          cpu: 200m
+          memory: 512Mi
+        limits:
+          cpu: 1000m
+          memory: 2Gi
+
+# Configuracion de ejecucion
+dagsterUserDeployments:
+  enabled: true
+  enableSubchart: true
+  deployments:
+    - name: "ml-pipelines"
+      image:
+        repository: docker.io/dagster/dagster-celery-k8s
+        tag: latest
+        pullPolicy: IfNotPresent
+      dagsterApiGrpcArgs:
+        - "--module-name"
+        - "dagster"
+      port: 3030
+      includeConfigInLaunchedRuns:
+        enabled: true
+      resources:
+        requests:
+          cpu: 100m
+          memory: 256Mi
+        limits:
+          cpu: 500m
+          memory: 512Mi
+
+# Ingress (deshabilitado - usamos LoadBalancer directamente)
+ingress:
+  enabled: false
+
+# ServiceAccount
+serviceAccount:
+  create: true
+  name: dagster
+
+# RBAC
+rbacEnabled: true

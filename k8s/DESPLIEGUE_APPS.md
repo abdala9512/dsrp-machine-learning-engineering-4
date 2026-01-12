@@ -126,127 +126,135 @@ Para ajustar, edita `k8s/qdrant.yaml` según tus necesidades.
 
 ---
 
-## Despliegue de Flyte (ML Pipelines)
+## Despliegue de Dagster (ML Pipelines)
 
-Flyte es una plataforma para orquestar workflows de Machine Learning. Usamos el chart `flyte-binary` con PostgreSQL y MinIO desplegados manualmente.
+Dagster es una plataforma moderna para orquestar pipelines de datos y ML. Incluye UI web, scheduler, y soporte nativo para Kubernetes.
+
+### Componentes incluidos
+- **Webserver**: UI para monitorear y ejecutar pipelines
+- **Daemon**: Scheduler, sensors y monitoreo de runs
+- **PostgreSQL**: Base de datos para metadatos
+- **User Deployments**: Pods con tu código de pipelines
 
 ### Prerrequisitos
 - Cluster AKS configurado y accesible via `kubectl`
 - Helm 3.x instalado
-- Al menos 4GB de RAM disponible en el cluster
+- Al menos 2GB de RAM disponible en el cluster
 
 ### Instalación paso a paso
 
-1) Agregar el repositorio de Helm de Flyte:
+1) Agregar el repositorio de Helm de Dagster:
 ```bash
-helm repo add flyteorg https://flyteorg.github.io/flyte
+helm repo add dagster https://dagster-io.github.io/helm
 helm repo update
 ```
 
-2) Crear el namespace de Flyte:
+2) Crear el namespace de Dagster:
 ```bash
-kubectl apply -f k8s/flyte-namespace.yaml
+kubectl apply -f k8s/dagster-namespace.yaml
 ```
 
-3) Desplegar las dependencias (PostgreSQL + MinIO):
+3) Instalar Dagster con Helm:
 ```bash
-kubectl apply -f k8s/flyte-deps.yaml
-```
-
-4) Esperar a que las dependencias estén listas:
-```bash
-kubectl get pods -n flyte -w
-# Esperar hasta que flyte-postgresql y flyte-minio estén Running
-# El job flyte-minio-init debe estar Completed
-```
-
-5) Instalar Flyte Binary con Helm:
-```bash
-helm install flyte flyteorg/flyte-binary \
-    --namespace flyte \
-    --values k8s/flyte-binary-values.yaml \
+helm install dagster dagster/dagster \
+    --namespace dagster \
+    --values k8s/dagster-values.yaml \
     --timeout 10m
 ```
 
-6) Verificar que todos los pods estén corriendo:
+4) Verificar que todos los pods estén corriendo:
 ```bash
-kubectl get pods -n flyte
+kubectl get pods -n dagster -w
 ```
 Esperar hasta que todos los pods estén en estado `Running`:
-- `flyte-flyte-binary-*` (servidor principal)
-- `flyte-postgresql-*` (base de datos)
-- `flyte-minio-*` (almacenamiento)
+- `dagster-dagster-webserver-*` (UI web)
+- `dagster-dagster-daemon-*` (scheduler)
+- `dagster-postgresql-*` (base de datos)
+- `dagster-dagster-user-deployments-*` (código de usuario)
 
-7) Obtener la IP pública del servicio:
+5) Obtener la IP pública del servicio:
 ```bash
-kubectl get svc -n flyte flyte-flyte-binary
+kubectl get svc -n dagster dagster-dagster-webserver
 ```
 
-8) (Opcional) Asignar un DNS label:
+6) (Opcional) Asignar un DNS label:
 ```bash
 cd iac
-task dns:set-label SERVICE=flyte-flyte-binary NS=flyte LABEL=flyte-dsrp
+task dns:set-label SERVICE=dagster-dagster-webserver NS=dagster LABEL=dagster-dsrp
 ```
 
-### Acceso a la consola de Flyte
+### Acceso a la UI de Dagster
 
-Una vez desplegado, accede a la consola web de Flyte:
-- **URL**: `http://<IP_PUBLICA>:8088/console` o `http://<DNS_LABEL>.<region>.cloudapp.azure.com:8088/console`
+Una vez desplegado, accede a la UI web:
+- **URL**: `http://<IP_PUBLICA>` o `http://dagster-dsrp.<region>.cloudapp.azure.com`
 
 Para acceso local via port-forward:
 ```bash
-kubectl port-forward svc/flyte-flyte-binary 8088:8088 -n flyte
-# Acceder en: http://localhost:8088/console
+kubectl port-forward svc/dagster-dagster-webserver 8080:80 -n dagster
+# Acceder en: http://localhost:8080
 ```
 
-### Configuración del cliente (flytekit)
+### Configuración del cliente (dagster)
 
-Para ejecutar workflows desde notebooks/scripts:
+Para ejecutar pipelines desde notebooks/scripts:
 
-1) Instalar flytekit:
+1) Instalar dagster:
 ```bash
-pip install flytekit
+pip install dagster dagster-webserver
 # o con uv:
-uv add flytekit
+uv add dagster dagster-webserver
 ```
 
-2) Configurar el endpoint de Flyte:
+2) Ejemplo básico de definición:
 ```python
-from flytekit.remote import FlyteRemote
-from flytekit.configuration import Config
+from dagster import asset, Definitions
 
-remote = FlyteRemote(
-    config=Config.for_endpoint(
-        endpoint="<IP_PUBLICA>:8089",  # Puerto gRPC
-        insecure=True
-    ),
-    default_project="flytesnacks",
-    default_domain="development",
+@asset
+def my_first_asset():
+    """Un asset simple que retorna datos."""
+    return [1, 2, 3]
+
+@asset
+def my_second_asset(my_first_asset):
+    """Asset que depende del primero."""
+    return [x * 2 for x in my_first_asset]
+
+defs = Definitions(
+    assets=[my_first_asset, my_second_asset],
 )
+```
+
+3) Ejecutar localmente:
+```bash
+dagster dev -f my_pipeline.py
+# Abre http://localhost:3000
 ```
 
 ### Desinstalación
 
-Para eliminar Flyte del cluster:
+Para eliminar Dagster del cluster:
 ```bash
-helm uninstall flyte -n flyte
-kubectl delete -f k8s/flyte-deps.yaml
-kubectl delete namespace flyte
+helm uninstall dagster -n dagster
+kubectl delete namespace dagster
 ```
 
 ### Troubleshooting
 
-- **Pods en CrashLoopBackOff**: Verificar recursos disponibles en los nodos
+- **Pods en CrashLoopBackOff**: Verificar recursos disponibles
   ```bash
-  kubectl describe pod <pod-name> -n flyte
-  kubectl logs <pod-name> -n flyte
+  kubectl describe pod -l app.kubernetes.io/name=dagster -n dagster
+  kubectl logs -l app.kubernetes.io/name=dagster -n dagster
   ```
 
-- **Conexión rechazada**: Verificar que el servicio esté expuesto
+- **Webserver no accesible**: Verificar que el LoadBalancer tenga IP
   ```bash
-  kubectl get svc -n flyte
+  kubectl get svc -n dagster
   ```
 
-- **MinIO no inicia**: Puede requerir más memoria. Editar `flyte-sandbox-values.yaml` y aumentar límites
+- **PostgreSQL no inicia**: Verificar PVC y recursos
+  ```bash
+  kubectl describe pvc -n dagster
+  kubectl logs -l app.kubernetes.io/name=postgresql -n dagster
+  ```
 
-> Nota: Este es un despliegue educativo. Para producción, usar el chart `flyte-core` con PostgreSQL y almacenamiento externo (Azure Blob Storage).
+> Nota: Este es un despliegue educativo. Para producción, considera usar PostgreSQL externo (Azure Database for PostgreSQL) y configurar autenticación.
