@@ -1,50 +1,152 @@
-# DSRP - Ingeniería de Machine Learning 4
+# DSRP - Ingenieria de Machine Learning 4
 
 <img src="utils/LOGO-DSRP.png" width="50%">
 
-Proyecto del curso de MLOps e Ingeniería de Software para ML de Data Science Research Peru (DSRP). Este sistema implementa un pipeline de recomendación/ranking de películas usando datos de IMDB, con infraestructura desplegada en Azure Kubernetes Service (AKS).
+Proyecto del curso de MLOps e Ingenieria de Software para ML de Data Science Research Peru (DSRP). Este sistema implementa un pipeline de recomendacion/ranking de peliculas usando datos de IMDB, con infraestructura desplegada en Azure Kubernetes Service (AKS).
 
-## Descripción del Proyecto
+## Descripcion del Proyecto
 
-El proyecto construye un sistema de Learning to Rank (LTR) para películas que incluye:
-- Recolección de datos de IMDB y enriquecimiento con la API de OMDB
-- Generación de embeddings con Sentence Transformers
-- Entrenamiento de modelos LightGBM Ranker con optimización de hiperparámetros
-- Seguimiento de experimentos con MLflow
-- Almacenamiento vectorial con Qdrant
-- Frontend desplegado en Kubernetes
+El proyecto construye un sistema de **Learning to Rank (LTR)** para peliculas que incluye:
+
+- **Recoleccion de datos**: Ingesta de IMDB y enriquecimiento con API de OMDB
+- **Feature Engineering**: Generacion de embeddings con Sentence Transformers
+- **Modelado**: Entrenamiento de modelos LightGBM Ranker con optimizacion de hiperparametros
+- **Tracking**: Seguimiento de experimentos con MLflow
+- **Vector Store**: Almacenamiento y busqueda semantica con Qdrant
+- **Orquestacion**: Pipelines de ML con Apache Airflow 3
+- **Despliegue**: Frontend y servicios en Azure Kubernetes Service
+
+## Arquitectura del Sistema
+
+### AS-IS (Estado Actual)
+
+Sistema simple donde el frontend consulta directamente la API de IMDB:
+
+```
++----------+          +------------+      HTTP Request     +----------+
+|          |          |            |  ------------------>  |          |
+|  Usuario |--------->|  DSRPFlix  |        Query          | API IMDB |
+|          |          |  Frontend  |  <------------------  |          |
++----------+          +------------+       Response        +----------+
+```
+
+### TO-BE (Arquitectura Objetivo)
+
+Sistema con backend inteligente que incluye retrieval semantico y re-ranking con ML:
+
+```
++----------+          +------------+        Query         +------------------+     GET IDs    +----------+
+|          |          |            |  ----------------->  |  DSRP Backend    | ------------> |          |
+|  Usuario |--------->|  DSRPFlix  |                      |  (Retrieve & RR) |               | API IMDB |
+|          |          |  Frontend  |  <-----------------  |                  | <------------ |          |
++----------+          +------------+        Recs          +--------+---------+    Metadata   +----------+
+                                                                  |
+                           +--------------------------------------+--------------------------------------+
+                           |                                      |                                      |
+                  +--------v--------+                    +--------v--------+                    +--------v--------+
+                  |    Groq API     |                    |    Retrieval    |      cand         |   Re-ranking    |
+                  | +-------------+ |       Query        |     Service     | ----------------> |     Service     |
+                  | | Translation | |  ----------------> | +-------------+ |                   | +-------------+ |
+                  | +-------------+ |                    | | Transformer | |                   | | LightGBM /  | |
+                  | +-------------+ |                    | | Embeddings  | |       Top-K       | | XGBoost     | |
+                  | | Query       | |                    | +-------------+ | <---------------- | +-------------+ |
+                  | | Refinement  | |                    +-----------------+                   +-----------------+
+                  | +-------------+ |                           |
+                  +-----------------+                    +------v------+
+                                                         |   Qdrant    |
+                                                         | Vector Store|
+                                                         +-------------+
+```
+
+### Flujo de Datos TO-BE
+
+1. **Usuario** realiza una busqueda en DSRPFlix (ej: "peliculas similares a Inception")
+2. **GroqAPI** procesa la query:
+   - Traduccion (si es necesario)
+   - Refinamiento de query para mejor recall
+3. **Retrieval Service** usa embeddings (Sentence Transformers) para buscar candidatos en Qdrant
+4. **Re-ranking Service** aplica modelo LightGBM/XGBoost para ordenar los candidatos por relevancia
+5. **DSRP Backend** consulta API IMDB para obtener metadata adicional de los Top-K resultados
+6. **DSRPFlix** muestra las recomendaciones ordenadas al usuario
+
+### Pipeline de ML (Offline)
+
+```
+                                    +------------------+
+                                    |   Apache Airflow |
+                                    |   (Orquestacion) |
+                                    +--------+---------+
+                                             |
+              +------------------------------+------------------------------+
+              |                              |                              |
+    +---------v----------+       +-----------v-----------+       +----------v---------+
+    |  Data Collection   |       |  Feature Engineering  |       |     Modeling       |
+    |  (IMDB + OMDB API) |------>|  (Embeddings + LTR)   |------>|  (LightGBM + HP)   |
+    +--------------------+       +-----------------------+       +----------+---------+
+                                             |                              |
+                                    +--------v--------+            +--------v--------+
+                                    |     Qdrant      |            |     MLflow      |
+                                    | (Vector Store)  |            |   (Tracking)    |
+                                    +-----------------+            +-----------------+
+```
 
 ## Estructura del Repositorio
 
 ```
 .
 ├── app/
-│   └── frontend/          # Aplicación React + Vite + TypeScript
-├── iac/                   # Infraestructura como código (Terraform para AKS)
-│   ├── README.md          # Guía de despliegue de infraestructura
-│   └── Taskfile.yml       # Automatización de tareas
-├── k8s/                   # Manifiestos de Kubernetes
-│   ├── DESPLIEGUE_APPS.md # Guía de despliegue de aplicaciones
-│   └── frontend.yaml      # Deployment y Service del frontend
-├── notebooks/             # Pipeline de ML
+│   └── frontend/                  # Aplicacion React + Vite + TypeScript
+├── iac/                           # Infraestructura como codigo (Terraform)
+│   ├── README.md                  # Guia de despliegue de infraestructura
+│   ├── Taskfile.yml               # Automatizacion de tareas (backend, DNS)
+│   ├── aks.tf                     # Configuracion del cluster AKS
+│   └── dsrp-values.tfvars         # Variables de configuracion (no en git)
+├── k8s/                           # Manifiestos de Kubernetes
+│   ├── DESPLIEGUE_APPS.md         # Guia de despliegue de aplicaciones
+│   ├── frontend.yaml              # Deployment del frontend
+│   ├── qdrant.yaml                # Deployment de Qdrant
+│   ├── airflow-namespace.yaml     # Namespace de Airflow
+│   └── airflow-values.yaml        # Configuracion Helm de Airflow
+├── notebooks/                     # Pipeline de ML
+│   ├── README.md                  # Documentacion del pipeline
+│   ├── ml_utils.py                # Utilidades compartidas
 │   ├── data_collection.ipynb      # Ingesta de datos IMDB/OMDB
-│   ├── feature_engineering.ipynb  # Creación de features y embeddings
+│   ├── feature_engineering.ipynb  # Creacion de features y embeddings
+│   ├── synthetic_queries.ipynb    # Generacion de queries LTR
 │   ├── modeling.ipynb             # Entrenamiento de modelos
-│   └── lgbm_ranker_hyperopt.py    # Optimización de hiperparámetros
-└── .github/
-    └── workflows/         # CI/CD con GitHub Actions
+│   ├── serving.ipynb              # Servicio de inferencia
+│   └── lgbm_ranker_hyperopt.py    # Optimizacion de hiperparametros
+├── .github/
+│   └── workflows/                 # CI/CD con GitHub Actions
+│       └── frontend-docker.yml    # Build y push de imagen Docker
+├── CLAUDE.md                      # Instrucciones para Claude Code
+└── AGENTS.md                      # Configuracion de agentes
 ```
+
+## Tech Stack
+
+| Categoria | Tecnologias |
+|-----------|-------------|
+| **ML Pipeline** | Python 3.11+, Polars, LightGBM, Hyperopt, Sentence Transformers |
+| **Experiment Tracking** | MLflow, DagsHub |
+| **Vector Database** | Qdrant |
+| **Orchestration** | Apache Airflow 3 (KubernetesExecutor) |
+| **Frontend** | React, Vite, TypeScript, TailwindCSS |
+| **Infrastructure** | Terraform, Azure AKS, Helm |
+| **CI/CD** | GitHub Actions, GitHub Container Registry (GHCR) |
+| **Package Management** | uv (Python), npm (Node.js) |
 
 ## Requisitos
 
 - Python 3.11+ con [uv](https://github.com/astral-sh/uv)
 - Node.js 18+
 - Azure CLI, Terraform y kubectl (para infraestructura)
+- Helm 3.x (para Airflow y otros charts)
 - Docker (para contenedores)
 
-## Inicio Rápido
+## Inicio Rapido
 
-### Pipeline de ML (notebooks/)
+### 1. Pipeline de ML (notebooks/)
 
 ```bash
 cd notebooks
@@ -55,22 +157,28 @@ uv sync
 # Iniciar JupyterLab
 uv run jupyter lab
 
-# Ejecutar optimización de hiperparámetros
+# Ejecutar notebooks en orden:
+# 1. data_collection.ipynb
+# 2. feature_engineering.ipynb
+# 3. synthetic_queries.ipynb
+# 4. modeling.ipynb
+
+# O ejecutar optimizacion de hiperparametros directamente
 uv run python lgbm_ranker_hyperopt.py --data-path data/ltr_imdb_dataset.parquet --max-evals 25
 ```
 
-### Frontend (app/frontend/)
+### 2. Frontend (app/frontend/)
 
 ```bash
 cd app/frontend
 
 npm install
-npm run dev      # Servidor de desarrollo
-npm run build    # Build de producción
-npm run lint     # Verificación de TypeScript
+npm run dev      # Servidor de desarrollo (http://localhost:5173)
+npm run build    # Build de produccion
+npm run lint     # Verificacion de TypeScript
 ```
 
-### Infraestructura (iac/)
+### 3. Infraestructura (iac/)
 
 ```bash
 cd iac
@@ -82,40 +190,120 @@ task backend:setup
 terraform init -backend-config=backend.hcl
 terraform plan -var-file=dsrp-values.tfvars
 terraform apply -var-file=dsrp-values.tfvars
+
+# Configurar acceso al cluster
+az aks get-credentials --resource-group rg-aks-dsrp4-prod2025 --name aks-cluster-dsrp4
 ```
 
-### Despliegue en Kubernetes
+### 4. Despliegue en Kubernetes
 
 ```bash
 # Desplegar frontend
 kubectl apply -f k8s/frontend.yaml
 
-# Verificar
-kubectl get pods
-kubectl get svc frontend
+# Desplegar Qdrant
+kubectl apply -f k8s/qdrant.yaml
+
+# Desplegar Airflow
+kubectl apply -f k8s/airflow-namespace.yaml
+helm repo add apache-airflow https://airflow.apache.org
+helm install airflow apache-airflow/airflow -n airflow -f k8s/airflow-values.yaml
+
+# Verificar deployments
+kubectl get pods --all-namespaces
+kubectl get svc --all-namespaces
 ```
 
-## Configuración
+### 5. Configurar DNS (opcional)
+
+```bash
+cd iac
+
+# Asignar DNS labels a los servicios
+task dns:set-label SERVICE=frontend LABEL=dsrp-frontend
+task dns:set-label SERVICE=qdrant LABEL=qdrant-dsrp
+task dns:set-label SERVICE=airflow-webserver NS=airflow LABEL=airflow-dsrp
+```
+
+## Configuracion
 
 ### Variables de Entorno
 
-El proyecto requiere los siguientes archivos de configuración (no incluidos en git):
+El proyecto requiere los siguientes archivos de configuracion (no incluidos en git):
 
-- `notebooks/.env`: Contiene `OMDB_API_KEY` para la recolección de datos
-- `iac/dsrp-values.tfvars`: Configuración de Azure (ver `iac/README.md` para plantilla)
+| Archivo | Descripcion |
+|---------|-------------|
+| `notebooks/.env` | Contiene `OMDB_API_KEY` para recoleccion de datos |
+| `iac/dsrp-values.tfvars` | Configuracion de Azure (ver `iac/README.md`) |
+| `iac/backend.hcl` | Configuracion del backend de Terraform |
 
-## Documentación Adicional
+### Ejemplo de .env
 
-- [Despliegue de AKS con Terraform](iac/README.md)
-- [Despliegue de Apps en Kubernetes](k8s/DESPLIEGUE_APPS.md)
-- [Pipeline de ML](notebooks/README.md)
+```bash
+# notebooks/.env
+OMDB_API_KEY=tu_api_key_aqui
+MLFLOW_TRACKING_URI=https://dagshub.com/usuario/repo.mlflow
+```
 
-## Tecnologías Principales
+## Documentacion
 
-| Componente | Tecnologías |
-|------------|-------------|
-| ML Pipeline | Polars, LightGBM, Hyperopt, MLflow, Sentence Transformers |
-| Vector Store | Qdrant |
-| Frontend | React, Vite, TypeScript |
-| Infraestructura | Terraform, Azure AKS |
-| CI/CD | GitHub Actions, GHCR |
+| Documento | Descripcion |
+|-----------|-------------|
+| [iac/README.md](iac/README.md) | Despliegue de infraestructura AKS con Terraform |
+| [k8s/DESPLIEGUE_APPS.md](k8s/DESPLIEGUE_APPS.md) | Guia de despliegue de aplicaciones (Frontend, Qdrant, Airflow) |
+| [notebooks/README.md](notebooks/README.md) | Documentacion del pipeline de ML |
+| [CLAUDE.md](CLAUDE.md) | Instrucciones para Claude Code |
+
+## URLs de Produccion
+
+Una vez desplegado, los servicios estan disponibles en:
+
+| Servicio | URL |
+|----------|-----|
+| Frontend | `http://dsrp-frontend.<region>.cloudapp.azure.com` |
+| Qdrant Dashboard | `http://qdrant-dsrp.<region>.cloudapp.azure.com:6333/dashboard` |
+| Airflow UI | `http://airflow-dsrp.<region>.cloudapp.azure.com` |
+
+## Pipeline de ML
+
+El pipeline de ML sigue estos pasos:
+
+1. **Data Collection** (`data_collection.ipynb`)
+   - Descarga datasets de IMDB (title.basics, title.ratings)
+   - Enriquece con datos de OMDB API (Plot, Director, Actors)
+   - Genera `movies_base.parquet` y `omdb_raw.jsonl`
+
+2. **Feature Engineering** (`feature_engineering.ipynb`)
+   - Combina datos IMDB + OMDB
+   - Genera embeddings con Sentence Transformers
+   - Crea features derivadas (log votes, year norm, etc.)
+   - Guarda `complete_imdb_database.parquet` y `movie_embs.npy`
+
+3. **Synthetic Queries** (`synthetic_queries.ipynb`)
+   - Genera queries sinteticas con plantillas y LLM (Ollama)
+   - Recupera candidatos usando similitud de embeddings
+   - Calcula scores de relevancia
+   - Genera dataset LTR (`ltr_imdb_dataset.parquet`)
+
+4. **Modeling** (`modeling.ipynb`)
+   - Entrena modelos LightGBM Ranker
+   - Tracking con MLflow
+   - Evaluacion con NDCG@K
+
+5. **Hyperparameter Optimization** (`lgbm_ranker_hyperopt.py`)
+   - Optimizacion con Hyperopt + MLflow
+   - Busqueda automatica de mejores parametros
+
+## Contribucion
+
+Este proyecto es parte del curso de Ingenieria de ML de DSRP. Para contribuir:
+
+1. Fork el repositorio
+2. Crea una rama (`git checkout -b feature/nueva-funcionalidad`)
+3. Commit los cambios (`git commit -m 'Agrega nueva funcionalidad'`)
+4. Push a la rama (`git push origin feature/nueva-funcionalidad`)
+5. Abre un Pull Request
+
+## Licencia
+
+Proyecto educativo de Data Science Research Peru (DSRP).
