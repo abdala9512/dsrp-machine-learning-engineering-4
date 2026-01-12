@@ -15,8 +15,8 @@ images:
     tag: "3.0.1"
     pullPolicy: IfNotPresent
 
-# Configuracion del Webserver
-webserver:
+# API Server (Web UI) - Airflow 3.0 renamed webserver to api-server
+apiServer:
   replicas: 1
   service:
     type: LoadBalancer
@@ -31,14 +31,19 @@ webserver:
     limits:
       cpu: 500m
       memory: 1Gi
-  defaultUser:
-    enabled: true
-    role: Admin
-    username: admin
-    email: admin@example.com
-    firstName: Admin
-    lastName: User
-    password: admin123
+
+# Default admin user
+webserverSecretKey: "my-secret-key-change-in-prod"
+createUserJob:
+  useHelmHooks: false
+defaultUser:
+  enabled: true
+  role: Admin
+  username: admin
+  email: admin@example.com
+  firstName: Admin
+  lastName: User
+  password: admin123
 
 # Scheduler
 scheduler:
@@ -63,13 +68,16 @@ triggerer:
       cpu: 300m
       memory: 512Mi
 
-# Workers (no necesarios con KubernetesExecutor)
-workers:
-  enabled: false
+# Workers: Not needed with KubernetesExecutor (tasks run as individual pods)
+# workers section omitted - KubernetesExecutor doesn't use persistent workers
 
 # PostgreSQL (base de datos de metadatos)
 postgresql:
   enabled: true
+  image:
+    registry: docker.io
+    repository: bitnami/postgresql
+    tag: "latest"
   auth:
     username: airflow
     password: airflow123
@@ -78,6 +86,7 @@ postgresql:
     persistence:
       enabled: true
       size: 5Gi
+      storageClass: managed-csi
     resources:
       requests:
         cpu: 100m
@@ -90,25 +99,43 @@ postgresql:
 redis:
   enabled: false
 
-# DAGs - Sincronizacion con Git
+# DAGs - Deployment Options
+# --------------------------
+# DAGs can be deployed in two ways:
+#
+# 1. GitHub Actions (CI/CD):
+#    - Push to dags/ folder on main branch
+#    - GitHub Action (.github/workflows/airflow-dags.yml) auto-deploys to AKS
+#    - Requires: AZURE_CREDENTIALS, AKS_RESOURCE_GROUP, AKS_CLUSTER_NAME secrets
+#
+# 2. Local Upload (Manual):
+#    - cd k8s && task airflow:dags:upload           # Upload all DAGs
+#    - cd k8s && task airflow:dags:upload:file FILE=../dags/my_dag.py  # Single file
+#    - cd k8s && task airflow:dags:list             # List current DAGs
+#    - cd k8s && task airflow:dags:delete FILE=my_dag.py  # Delete a DAG
+#
+# Note: Requires 'task' (go-task) and kubectl configured with AKS credentials
+#
 dags:
   persistence:
     enabled: true
     size: 1Gi
+    storageClassName: azurefile-csi
+    accessMode: ReadWriteMany
+  # gitSync pulls DAGs from your Git repo automatically
   gitSync:
-    enabled: false
-    # Para habilitar sincronizacion con Git:
-    # enabled: true
-    # repo: https://github.com/tu-usuario/tu-repo.git
-    # branch: main
-    # subPath: dags
-    # wait: 60
+    enabled: true
+    repo: https://github.com/datascience-research-peru/dsrp-machine-learning-engineering-4.git
+    branch: main
+    subPath: dags
+    wait: 60
 
 # Logs
 logs:
   persistence:
     enabled: true
     size: 5Gi
+    storageClassName: azurefile-csi
 
 # Configuracion extra de Airflow
 config:
@@ -116,6 +143,8 @@ config:
     dags_are_paused_at_creation: "True"
     load_examples: "False"
     executor: "KubernetesExecutor"
+  scheduler:
+    dag_dir_list_interval: "30"  # Scan for new DAGs every 30 seconds (default: 300)
   webserver:
     expose_config: "True"
     rbac: "True"
@@ -123,10 +152,9 @@ config:
     delete_worker_pods: "True"
     delete_worker_pods_on_failure: "False"
 
-# Variables de entorno adicionales
-env:
-  - name: AIRFLOW__CORE__FERNET_KEY
-    value: "81HqDtbqAywKSOumSha3BhWNOdQ26slT6K0YaZeZyPs="
+# Fernet key for encrypting connections/variables in the database
+# Generate a new one with: python -c "from cryptography.fernet import Fernet; print(Fernet.generate_key().decode())"
+fernetKey: "81HqDtbqAywKSOumSha3BhWNOdQ26slT6K0YaZeZyPs="
 
 # ServiceAccount para KubernetesExecutor
 serviceAccount:

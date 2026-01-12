@@ -61,7 +61,7 @@ Sistema con backend inteligente que incluye retrieval semantico y re-ranking con
 ### Flujo de Datos TO-BE
 
 1. **Usuario** realiza una busqueda en DSRPFlix (ej: "peliculas similares a Inception")
-2. **GroqAPI** procesa la query:
+2. **Ollama API** procesa la query:
    - Traduccion (si es necesario)
    - Refinamiento de query para mejor recall
 3. **Retrieval Service** usa embeddings (Sentence Transformers) para buscar candidatos en Qdrant

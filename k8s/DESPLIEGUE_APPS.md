@@ -168,20 +168,20 @@ helm install airflow apache-airflow/airflow \
 kubectl get pods -n airflow -w
 ```
 Esperar hasta que todos los pods esten en estado `Running`:
-- `airflow-webserver-*` (UI web)
+- `airflow-api-server-*` (UI web)
 - `airflow-scheduler-*` (scheduler)
 - `airflow-triggerer-*` (triggerer)
 - `airflow-postgresql-*` (base de datos)
 
 5) Obtener la IP publica del servicio:
 ```bash
-kubectl get svc -n airflow airflow-webserver
+kubectl get svc -n airflow airflow-api-server
 ```
 
 6) (Opcional) Asignar un DNS label:
 ```bash
 cd iac
-task dns:set-label SERVICE=airflow-webserver NS=airflow LABEL=airflow-dsrp
+task dns:set-label SERVICE=airflow-api-server NS=airflow LABEL=airflow-dsrp
 ```
 
 ### Acceso a la UI de Airflow
@@ -193,7 +193,7 @@ Una vez desplegado, accede a la UI web:
 
 Para acceso local via port-forward:
 ```bash
-kubectl port-forward svc/airflow-webserver 8080:80 -n airflow
+kubectl port-forward svc/airflow-api-server 8080:80 -n airflow
 # Acceder en: http://localhost:8080
 ```
 
@@ -201,13 +201,38 @@ kubectl port-forward svc/airflow-webserver 8080:80 -n airflow
 
 Airflow 3 facilita la gestion de DAGs. Hay varias opciones:
 
-**Opcion 1: Copiar DAGs manualmente**
+**Opcion 1: Usar Taskfile (recomendado para desarrollo)**
 ```bash
-# Copiar un archivo DAG al pod del scheduler
-kubectl cp mi_dag.py airflow/airflow-scheduler-0:/opt/airflow/dags/
+cd k8s
+
+# Subir todos los DAGs del folder dags/
+task airflow:dags:upload
+
+# Subir un archivo especifico
+task airflow:dags:upload:file FILE=../dags/mi_dag.py
+
+# Listar DAGs actuales en el cluster
+task airflow:dags:list
+
+# Eliminar un DAG
+task airflow:dags:delete FILE=mi_dag.py
+
+# Ver logs del scheduler
+task airflow:logs
+
+# Ver estado de Airflow
+task airflow:status
 ```
 
-**Opcion 2: Usar Git-Sync (recomendado)**
+**Opcion 2: GitHub Actions (CI/CD)**
+
+Los DAGs se despliegan automaticamente al hacer push a `dags/` en la rama `main`.
+Requiere configurar estos secrets en GitHub:
+- `AZURE_CREDENTIALS`
+- `AKS_RESOURCE_GROUP`
+- `AKS_CLUSTER_NAME`
+
+**Opcion 3: Usar Git-Sync (sincronizacion automatica)**
 
 Edita `k8s/airflow-values.yaml` y habilita git-sync:
 ```yaml

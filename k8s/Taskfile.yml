@@ -1,0 +1,218 @@
+version: '3'
+
+vars:
+  AIRFLOW_NAMESPACE: airflow
+  DAGS_SOURCE: ../dags
+
+tasks:
+  default:
+    desc: "Show available tasks"
+    cmds:
+      - task --list
+
+  airflow:dags:upload:
+    desc: "Upload all DAG files to the Airflow scheduler pod"
+    summary: |
+      Uploads all .py files from the dags/ directory to the Airflow scheduler pod.
+
+      Usage:
+        task airflow:dags:upload
+
+      Prerequisites:
+        - kubectl configured with AKS credentials
+        - Airflow deployed in the airflow namespace
+    cmds:
+      - |
+        set -euo pipefail
+
+        NAMESPACE="{{.AIRFLOW_NAMESPACE}}"
+        DAGS_DIR="{{.DAGS_SOURCE}}"
+
+        echo ""
+        echo "📦 Uploading DAGs to Airflow"
+        echo "   Namespace: $NAMESPACE"
+        echo "   Source: $DAGS_DIR"
+        echo ""
+
+        # Check if dags directory exists
+        if [ ! -d "$DAGS_DIR" ]; then
+          echo "❌ DAGs directory not found: $DAGS_DIR"
+          exit 1
+        fi
+
+        # Get scheduler pod name
+        echo "🔎 Finding Airflow scheduler pod..."
+        POD_NAME=$(kubectl get pods -n "$NAMESPACE" \
+          -l component=scheduler \
+          -o jsonpath='{.items[0].metadata.name}' 2>/dev/null)
+
+        if [ -z "$POD_NAME" ]; then
+          echo "❌ Could not find Airflow scheduler pod in namespace '$NAMESPACE'"
+          echo ""
+          echo "Available pods in $NAMESPACE:"
+          kubectl get pods -n "$NAMESPACE" --no-headers 2>/dev/null | awk '{print "   - " $1}' || echo "   (none)"
+          exit 1
+        fi
+        echo "✅ Found scheduler pod: $POD_NAME"
+        echo ""
+
+        # Upload each DAG file
+        echo "📤 Uploading DAG files..."
+        UPLOADED=0
+        for dag_file in "$DAGS_DIR"/*.py; do
+          if [ -f "$dag_file" ]; then
+            FILENAME=$(basename "$dag_file")
+            echo "   Uploading: $FILENAME"
+            kubectl cp "$dag_file" \
+              "$NAMESPACE/$POD_NAME:/opt/airflow/dags/$FILENAME" \
+              -c scheduler
+            UPLOADED=$((UPLOADED + 1))
+          fi
+        done
+
+        if [ $UPLOADED -eq 0 ]; then
+          echo "⚠️  No .py files found in $DAGS_DIR"
+          exit 0
+        fi
+
+        echo ""
+        echo "✅ Uploaded $UPLOADED DAG file(s)"
+        echo ""
+
+        # List DAGs in pod
+        echo "📋 DAGs in scheduler pod:"
+        kubectl exec -n "$NAMESPACE" "$POD_NAME" -c scheduler -- ls -la /opt/airflow/dags/ 2>/dev/null || echo "   Could not list DAGs"
+
+  airflow:dags:upload:file:
+    desc: "Upload a specific DAG file to Airflow"
+    summary: |
+      Uploads a single .py file to the Airflow scheduler pod.
+
+      Usage:
+        task airflow:dags:upload:file FILE=path/to/dag.py
+    vars:
+      FILE: '{{.FILE | default ""}}'
+    preconditions:
+      - sh: '[ -n "{{.FILE}}" ]'
+        msg: "Error: FILE is required. Usage: task airflow:dags:upload:file FILE=path/to/dag.py"
+      - sh: '[ -f "{{.FILE}}" ]'
+        msg: "Error: File not found: {{.FILE}}"
+    cmds:
+      - |
+        set -euo pipefail
+
+        NAMESPACE="{{.AIRFLOW_NAMESPACE}}"
+        DAG_FILE="{{.FILE}}"
+        FILENAME=$(basename "$DAG_FILE")
+
+        echo ""
+        echo "📦 Uploading single DAG to Airflow"
+        echo "   File: $DAG_FILE"
+        echo ""
+
+        # Get scheduler pod name
+        POD_NAME=$(kubectl get pods -n "$NAMESPACE" \
+          -l component=scheduler \
+          -o jsonpath='{.items[0].metadata.name}' 2>/dev/null)
+
+        if [ -z "$POD_NAME" ]; then
+          echo "❌ Could not find Airflow scheduler pod"
+          exit 1
+        fi
+        echo "✅ Found scheduler pod: $POD_NAME"
+
+        # Upload file
+        echo "📤 Uploading: $FILENAME"
+        kubectl cp "$DAG_FILE" \
+          "$NAMESPACE/$POD_NAME:/opt/airflow/dags/$FILENAME" \
+          -c scheduler
+
+        echo ""
+        echo "✅ Uploaded: $FILENAME"
+
+  airflow:dags:list:
+    desc: "List DAGs currently in the Airflow scheduler pod"
+    cmds:
+      - |
+        set -euo pipefail
+
+        NAMESPACE="{{.AIRFLOW_NAMESPACE}}"
+
+        POD_NAME=$(kubectl get pods -n "$NAMESPACE" \
+          -l component=scheduler \
+          -o jsonpath='{.items[0].metadata.name}' 2>/dev/null)
+
+        if [ -z "$POD_NAME" ]; then
+          echo "❌ Could not find Airflow scheduler pod"
+          exit 1
+        fi
+
+        echo "📋 DAGs in Airflow scheduler ($POD_NAME):"
+        echo ""
+        kubectl exec -n "$NAMESPACE" "$POD_NAME" -c scheduler -- ls -la /opt/airflow/dags/
+
+  airflow:dags:delete:
+    desc: "Delete a DAG file from Airflow"
+    summary: |
+      Deletes a DAG file from the Airflow scheduler pod.
+
+      Usage:
+        task airflow:dags:delete FILE=dag_name.py
+    vars:
+      FILE: '{{.FILE | default ""}}'
+    preconditions:
+      - sh: '[ -n "{{.FILE}}" ]'
+        msg: "Error: FILE is required. Usage: task airflow:dags:delete FILE=dag_name.py"
+    cmds:
+      - |
+        set -euo pipefail
+
+        NAMESPACE="{{.AIRFLOW_NAMESPACE}}"
+        FILENAME="{{.FILE}}"
+
+        POD_NAME=$(kubectl get pods -n "$NAMESPACE" \
+          -l component=scheduler \
+          -o jsonpath='{.items[0].metadata.name}' 2>/dev/null)
+
+        if [ -z "$POD_NAME" ]; then
+          echo "❌ Could not find Airflow scheduler pod"
+          exit 1
+        fi
+
+        echo "🗑️  Deleting DAG: $FILENAME"
+        kubectl exec -n "$NAMESPACE" "$POD_NAME" -c scheduler -- rm -f "/opt/airflow/dags/$FILENAME"
+        echo "✅ Deleted: $FILENAME"
+
+  airflow:status:
+    desc: "Show Airflow deployment status"
+    cmds:
+      - |
+        set -euo pipefail
+
+        NAMESPACE="{{.AIRFLOW_NAMESPACE}}"
+
+        echo "📊 Airflow Status in namespace: $NAMESPACE"
+        echo ""
+        echo "Pods:"
+        kubectl get pods -n "$NAMESPACE" -o wide 2>/dev/null || echo "   No pods found or namespace doesn't exist"
+        echo ""
+        echo "Services:"
+        kubectl get svc -n "$NAMESPACE" 2>/dev/null || echo "   No services found"
+
+  airflow:logs:
+    desc: "Show Airflow scheduler logs"
+    vars:
+      TAIL: '{{.TAIL | default "100"}}'
+    cmds:
+      - |
+        NAMESPACE="{{.AIRFLOW_NAMESPACE}}"
+        POD_NAME=$(kubectl get pods -n "$NAMESPACE" \
+          -l component=scheduler \
+          -o jsonpath='{.items[0].metadata.name}' 2>/dev/null)
+
+        if [ -z "$POD_NAME" ]; then
+          echo "❌ Could not find Airflow scheduler pod"
+          exit 1
+        fi
+
+        kubectl logs -n "$NAMESPACE" "$POD_NAME" -c scheduler --tail={{.TAIL}}
