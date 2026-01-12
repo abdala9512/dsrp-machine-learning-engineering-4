@@ -44,7 +44,7 @@ Sistema con backend inteligente que incluye retrieval semantico y re-ranking con
                            +--------------------------------------+--------------------------------------+
                            |                                      |                                      |
                   +--------v--------+                    +--------v--------+                    +--------v--------+
-                  |    Groq API     |                    |    Retrieval    |      cand         |   Re-ranking    |
+                  |    Ollama OSS   |                    |    Retrieval    |      cand         |   Re-ranking    |
                   | +-------------+ |       Query        |     Service     | ----------------> |     Service     |
                   | | Translation | |  ----------------> | +-------------+ |                   | +-------------+ |
                   | +-------------+ |                    | | Transformer | |                   | | LightGBM /  | |
