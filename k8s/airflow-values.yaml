@@ -26,11 +26,19 @@ apiServer:
         targetPort: 8080
   resources:
     requests:
-      cpu: 200m
-      memory: 512Mi
-    limits:
       cpu: 500m
-      memory: 1Gi
+      memory: 2Gi
+    limits:
+      cpu: 2000m
+      memory: 4Gi
+  # Increase startup probe timeout
+  startupProbe:
+    failureThreshold: 30
+    periodSeconds: 10
+  livenessProbe:
+    initialDelaySeconds: 60
+    periodSeconds: 30
+    failureThreshold: 5
 
 # Default admin user
 webserverSecretKey: "my-secret-key-change-in-prod"
@@ -118,14 +126,11 @@ redis:
 #
 dags:
   persistence:
-    enabled: true
-    size: 1Gi
-    storageClassName: azurefile-csi
-    accessMode: ReadWriteMany
+    enabled: false
   # gitSync pulls DAGs from your Git repo automatically
   gitSync:
     enabled: true
-    repo: https://github.com/datascience-research-peru/dsrp-machine-learning-engineering-4.git
+    repo: https://github.com/abdala9512/dsrp-machine-learning-engineering-4.git
     branch: main
     subPath: dags
     wait: 60

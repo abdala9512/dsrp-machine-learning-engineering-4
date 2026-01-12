@@ -146,7 +146,66 @@ Sistema con backend inteligente que incluye retrieval semantico y re-ranking con
 
 ## Inicio Rapido
 
-### 1. Pipeline de ML (notebooks/)
+### Opcion 1: Despliegue Completo con Taskfile (Recomendado)
+
+El proyecto incluye un Taskfile que automatiza todo el despliegue:
+
+```bash
+# Instalar task (go-task) si no lo tienes
+# macOS: brew install go-task
+# Linux: sh -c "$(curl --location https://taskfile.dev/install.sh)" -- -d
+
+# Ver todas las tareas disponibles
+task --list
+
+# Despliegue completo: infraestructura + aplicaciones + DNS
+task deploy:all
+
+# O ejecutar pasos individuales:
+task deploy:infra          # Solo infraestructura (backend + Terraform)
+task deploy:apps           # Solo aplicaciones
+task dns:configure         # Solo configuracion DNS
+```
+
+#### Comandos Principales del Taskfile
+
+| Comando | Descripcion |
+|---------|-------------|
+| `task deploy:all` | Despliegue completo desde cero |
+| `task deploy:infra` | Backend de Terraform + AKS |
+| `task deploy:apps` | Desplegar todas las aplicaciones |
+| `task deploy:app APP=<name>` | Desplegar una aplicacion especifica |
+| `task dns:configure` | Configurar DNS para todas las apps |
+| `task status` | Ver estado de todos los componentes |
+| `task apps:list` | Listar aplicaciones registradas |
+
+#### Utilidades
+
+| Comando | Descripcion |
+|---------|-------------|
+| `task logs APP=<name>` | Ver logs de una aplicacion |
+| `task port-forward APP=<name>` | Port-forward local |
+| `task status:app APP=<name>` | Estado detallado de una app |
+| `task destroy:app APP=<name>` | Eliminar una aplicacion |
+| `task destroy:all` | Eliminar todas las aplicaciones |
+| `task destroy:infra` | Destruir infraestructura (requiere confirmacion) |
+
+#### Agregar Nuevas Aplicaciones
+
+Para agregar una nueva aplicacion, edita la variable `APPLICATIONS` en `Taskfile.yml`:
+
+```yaml
+# Formato: nombre|namespace|manifest|service|dns_label|tipo
+APPLICATIONS: |
+  frontend|default|k8s/frontend.yaml|frontend|dsrp-frontend|kubectl
+  qdrant|default|k8s/qdrant.yaml|qdrant|qdrant-dsrp|kubectl
+  airflow|airflow|k8s/airflow-values.yaml|airflow-api-server|airflow-dsrp|helm
+  mi-app|default|k8s/mi-app.yaml|mi-app|mi-app-dsrp|kubectl  # Nueva app
+```
+
+### Opcion 2: Despliegue Manual Paso a Paso
+
+#### 2.1 Pipeline de ML (notebooks/)
 
 ```bash
 cd notebooks
@@ -162,12 +221,14 @@ uv run jupyter lab
 # 2. feature_engineering.ipynb
 # 3. synthetic_queries.ipynb
 # 4. modeling.ipynb
+# 5. qdrant_indexing.ipynb (indexar en Qdrant)
+# 6. serving.ipynb (probar busquedas)
 
 # O ejecutar optimizacion de hiperparametros directamente
 uv run python lgbm_ranker_hyperopt.py --data-path data/ltr_imdb_dataset.parquet --max-evals 25
 ```
 
-### 2. Frontend (app/frontend/)
+#### 2.2 Frontend (app/frontend/)
 
 ```bash
 cd app/frontend
@@ -178,7 +239,7 @@ npm run build    # Build de produccion
 npm run lint     # Verificacion de TypeScript
 ```
 
-### 3. Infraestructura (iac/)
+#### 2.3 Infraestructura (iac/)
 
 ```bash
 cd iac
@@ -195,7 +256,7 @@ terraform apply -var-file=dsrp-values.tfvars
 az aks get-credentials --resource-group rg-aks-dsrp4-prod2025 --name aks-cluster-dsrp4
 ```
 
-### 4. Despliegue en Kubernetes
+#### 2.4 Despliegue en Kubernetes
 
 ```bash
 # Desplegar frontend
@@ -214,7 +275,7 @@ kubectl get pods --all-namespaces
 kubectl get svc --all-namespaces
 ```
 
-### 5. Configurar DNS (opcional)
+#### 2.5 Configurar DNS (opcional)
 
 ```bash
 cd iac
@@ -222,7 +283,7 @@ cd iac
 # Asignar DNS labels a los servicios
 task dns:set-label SERVICE=frontend LABEL=dsrp-frontend
 task dns:set-label SERVICE=qdrant LABEL=qdrant-dsrp
-task dns:set-label SERVICE=airflow-webserver NS=airflow LABEL=airflow-dsrp
+task dns:set-label SERVICE=airflow-api-server NS=airflow LABEL=airflow-dsrp
 ```
 
 ## Configuracion

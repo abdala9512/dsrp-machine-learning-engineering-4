@@ -11,12 +11,14 @@
 qdrant_data/
 qdrant_storage/
 
+
 # Terraform vars
 *.tfvars
 *.tfvars.json
 iac/.terraform.lock.hcl
 iac/.terraform/
 iac/*.out
+tfplan
 
 # Byte-compiled / optimized / DLL files
 __pycache__/

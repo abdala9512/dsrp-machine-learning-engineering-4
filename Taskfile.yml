@@ -1,0 +1,592 @@
+version: '3'
+
+# =============================================================================
+# DSRP MLOps Platform - Master Taskfile
+# =============================================================================
+# This Taskfile orchestrates the entire deployment of the MLOps platform.
+#
+# Quick Start:
+#   task deploy:all              # Deploy everything from scratch
+#   task deploy:apps             # Deploy only applications (assumes infra exists)
+#   task status                  # Check status of all components
+#
+# Individual Components:
+#   task deploy:infra            # Setup backend + terraform
+#   task deploy:app APP=airflow  # Deploy a specific app
+#   task dns:configure           # Configure DNS for all apps
+# =============================================================================
+
+vars:
+  # Azure/AKS Configuration
+  RESOURCE_GROUP: '{{.RESOURCE_GROUP | default "rg-dsrp-mlops"}}'
+  CLUSTER_NAME: '{{.CLUSTER_NAME | default "dsrp-mlops-aks"}}'
+  LOCATION: '{{.LOCATION | default "eastus"}}'
+
+  # Terraform
+  TFVARS_FILE: dsrp-values.tfvars
+
+  # Kubernetes namespaces
+  AIRFLOW_NAMESPACE: airflow
+
+  # ==========================================================================
+  # APPLICATION REGISTRY - Add new applications here
+  # ==========================================================================
+  # Format: name|namespace|manifest|service|dns_label|type
+  # Types: helm, kubectl
+  APPLICATIONS: |
+    frontend|default|k8s/frontend.yaml|frontend|dsrp-frontend|kubectl
+    qdrant|default|k8s/qdrant.yaml|qdrant|qdrant-dsrp|kubectl
+    airflow|airflow|k8s/airflow-values.yaml|airflow-api-server|airflow-dsrp|helm
+
+includes:
+  iac:
+    taskfile: ./iac/Taskfile.yml
+    dir: ./iac
+  k8s:
+    taskfile: ./k8s/Taskfile.yml
+    dir: ./k8s
+
+tasks:
+  # ===========================================================================
+  # DEFAULT
+  # ===========================================================================
+  default:
+    desc: "Show available tasks"
+    cmds:
+      - task --list
+
+  # ===========================================================================
+  # FULL DEPLOYMENT
+  # ===========================================================================
+  deploy:all:
+    desc: "Deploy everything: infrastructure + applications + DNS"
+    summary: |
+      Complete deployment of the MLOps platform from scratch.
+
+      This will:
+        1. Setup Terraform backend (Azure Storage)
+        2. Deploy AKS cluster with Terraform
+        3. Get AKS credentials
+        4. Deploy all applications (Frontend, Qdrant, Airflow)
+        5. Configure DNS for all applications
+
+      Usage:
+        task deploy:all
+        task deploy:all RESOURCE_GROUP=my-rg CLUSTER_NAME=my-cluster
+    cmds:
+      - task: deploy:infra
+      - task: deploy:apps
+      - task: dns:configure
+
+  # ===========================================================================
+  # INFRASTRUCTURE
+  # ===========================================================================
+  deploy:infra:
+    desc: "Deploy infrastructure (Terraform backend + AKS)"
+    cmds:
+      - task: infra:backend
+      - task: infra:apply
+      - task: infra:credentials
+
+  infra:backend:
+    desc: "Setup Terraform backend (Azure Storage)"
+    dir: ./iac
+    cmds:
+      - task: iac:backend:setup
+
+  infra:apply:
+    desc: "Apply Terraform to create AKS cluster"
+    dir: ./iac
+    cmds:
+      - |
+        set -euo pipefail
+
+        echo "🚀 Deploying AKS infrastructure..."
+        echo ""
+
+        # Initialize Terraform
+        if [ -f "backend.hcl" ]; then
+          terraform init -backend-config=backend.hcl
+        else
+          echo "⚠️  backend.hcl not found. Run 'task infra:backend' first."
+          exit 1
+        fi
+
+        # Plan
+        echo ""
+        echo "📋 Planning changes..."
+        terraform plan -var-file={{.TFVARS_FILE}} -out=tfplan
+
+        # Apply
+        echo ""
+        echo "🔨 Applying changes..."
+        terraform apply tfplan
+
+        echo ""
+        echo "✅ Infrastructure deployed successfully!"
+
+  infra:credentials:
+    desc: "Get AKS credentials for kubectl"
+    cmds:
+      - |
+        set -euo pipefail
+
+        echo "🔑 Getting AKS credentials..."
+
+        # Get cluster info from terraform output or use defaults
+        cd iac
+        if terraform output -raw resource_group_name &>/dev/null; then
+          RG=$(terraform output -raw resource_group_name)
+          CLUSTER=$(terraform output -raw kubernetes_cluster_name)
+        else
+          RG="{{.RESOURCE_GROUP}}"
+          CLUSTER="{{.CLUSTER_NAME}}"
+        fi
+        cd ..
+
+        echo "   Resource Group: $RG"
+        echo "   Cluster: $CLUSTER"
+
+        az aks get-credentials \
+          --resource-group "$RG" \
+          --name "$CLUSTER" \
+          --overwrite-existing
+
+        echo ""
+        echo "✅ kubectl configured!"
+        kubectl cluster-info
+
+  # ===========================================================================
+  # APPLICATIONS DEPLOYMENT
+  # ===========================================================================
+  deploy:apps:
+    desc: "Deploy all applications"
+    cmds:
+      - task: deploy:app
+        vars: { APP: frontend }
+      - task: deploy:app
+        vars: { APP: qdrant }
+      - task: deploy:app
+        vars: { APP: airflow }
+
+  deploy:app:
+    desc: "Deploy a specific application"
+    summary: |
+      Deploy a single application to the cluster.
+
+      Usage:
+        task deploy:app APP=frontend
+        task deploy:app APP=qdrant
+        task deploy:app APP=airflow
+
+      To add a new application, add it to the APPLICATIONS variable in this Taskfile.
+    vars:
+      APP: '{{.APP | default ""}}'
+    preconditions:
+      - sh: '[ -n "{{.APP}}" ]'
+        msg: "Error: APP is required. Usage: task deploy:app APP=<app-name>"
+    cmds:
+      - |
+        set -euo pipefail
+
+        APP_NAME="{{.APP}}"
+
+        # Parse application registry
+        APP_CONFIG=$(echo '{{.APPLICATIONS}}' | grep "^${APP_NAME}|" || true)
+
+        if [ -z "$APP_CONFIG" ]; then
+          echo "❌ Unknown application: $APP_NAME"
+          echo ""
+          echo "Available applications:"
+          echo '{{.APPLICATIONS}}' | cut -d'|' -f1 | sed 's/^/  - /'
+          exit 1
+        fi
+
+        # Parse config: name|namespace|manifest|service|dns_label|type
+        NAMESPACE=$(echo "$APP_CONFIG" | cut -d'|' -f2)
+        MANIFEST=$(echo "$APP_CONFIG" | cut -d'|' -f3)
+        SERVICE=$(echo "$APP_CONFIG" | cut -d'|' -f4)
+        DNS_LABEL=$(echo "$APP_CONFIG" | cut -d'|' -f5)
+        DEPLOY_TYPE=$(echo "$APP_CONFIG" | cut -d'|' -f6)
+
+        echo "🚀 Deploying: $APP_NAME"
+        echo "   Namespace: $NAMESPACE"
+        echo "   Manifest: $MANIFEST"
+        echo "   Type: $DEPLOY_TYPE"
+        echo ""
+
+        # Create namespace if needed
+        if [ "$NAMESPACE" != "default" ]; then
+          kubectl create namespace "$NAMESPACE" --dry-run=client -o yaml | kubectl apply -f -
+        fi
+
+        # Deploy based on type
+        case "$DEPLOY_TYPE" in
+          kubectl)
+            echo "📦 Applying kubectl manifest..."
+            kubectl apply -f "$MANIFEST"
+            ;;
+          helm)
+            echo "📦 Installing/upgrading Helm chart..."
+            if [ "$APP_NAME" = "airflow" ]; then
+              # Add Airflow repo if not exists
+              helm repo add apache-airflow https://airflow.apache.org 2>/dev/null || true
+              helm repo update
+
+              helm upgrade --install airflow apache-airflow/airflow \
+                --namespace "$NAMESPACE" \
+                --values "$MANIFEST" \
+                --timeout 15m
+            fi
+            ;;
+          *)
+            echo "❌ Unknown deploy type: $DEPLOY_TYPE"
+            exit 1
+            ;;
+        esac
+
+        echo ""
+        echo "⏳ Waiting for deployment to be ready..."
+
+        # Wait for pods to be ready
+        case "$APP_NAME" in
+          airflow)
+            kubectl wait --for=condition=ready pod \
+              -l component=api-server \
+              -n "$NAMESPACE" \
+              --timeout=300s 2>/dev/null || echo "   Still starting..."
+            ;;
+          *)
+            kubectl wait --for=condition=ready pod \
+              -l app="$APP_NAME" \
+              -n "$NAMESPACE" \
+              --timeout=120s 2>/dev/null || echo "   Still starting..."
+            ;;
+        esac
+
+        echo ""
+        echo "✅ $APP_NAME deployed!"
+        echo ""
+        echo "📊 Status:"
+        kubectl get pods -n "$NAMESPACE" -l app="$APP_NAME" 2>/dev/null || \
+          kubectl get pods -n "$NAMESPACE" | head -10
+
+  # ===========================================================================
+  # DNS CONFIGURATION
+  # ===========================================================================
+  dns:configure:
+    desc: "Configure DNS for all applications"
+    cmds:
+      - |
+        set -euo pipefail
+
+        echo "🌐 Configuring DNS for all applications..."
+        echo ""
+
+        # Parse applications and configure DNS
+        echo '{{.APPLICATIONS}}' | while IFS='|' read -r NAME NAMESPACE MANIFEST SERVICE DNS_LABEL TYPE; do
+          [ -z "$NAME" ] && continue
+
+          echo "🏷️  Configuring DNS for: $NAME"
+          echo "   Service: $SERVICE"
+          echo "   Namespace: $NAMESPACE"
+          echo "   DNS Label: $DNS_LABEL"
+
+          # Check if service exists and has external IP
+          EXTERNAL_IP=$(kubectl get svc "$SERVICE" -n "$NAMESPACE" \
+            -o jsonpath='{.status.loadBalancer.ingress[0].ip}' 2>/dev/null || echo "")
+
+          if [ -z "$EXTERNAL_IP" ]; then
+            echo "   ⏳ Waiting for external IP..."
+            sleep 10
+            EXTERNAL_IP=$(kubectl get svc "$SERVICE" -n "$NAMESPACE" \
+              -o jsonpath='{.status.loadBalancer.ingress[0].ip}' 2>/dev/null || echo "")
+          fi
+
+          if [ -n "$EXTERNAL_IP" ]; then
+            echo "   IP: $EXTERNAL_IP"
+            cd iac && task dns:set-label SERVICE="$SERVICE" NS="$NAMESPACE" LABEL="$DNS_LABEL" && cd ..
+          else
+            echo "   ⚠️  No external IP yet. Skipping DNS configuration."
+          fi
+
+          echo ""
+        done
+
+        echo "✅ DNS configuration complete!"
+
+  dns:app:
+    desc: "Configure DNS for a specific application"
+    vars:
+      APP: '{{.APP | default ""}}'
+    preconditions:
+      - sh: '[ -n "{{.APP}}" ]'
+        msg: "Error: APP is required. Usage: task dns:app APP=<app-name>"
+    cmds:
+      - |
+        set -euo pipefail
+
+        APP_NAME="{{.APP}}"
+        APP_CONFIG=$(echo '{{.APPLICATIONS}}' | grep "^${APP_NAME}|" || true)
+
+        if [ -z "$APP_CONFIG" ]; then
+          echo "❌ Unknown application: $APP_NAME"
+          exit 1
+        fi
+
+        NAMESPACE=$(echo "$APP_CONFIG" | cut -d'|' -f2)
+        SERVICE=$(echo "$APP_CONFIG" | cut -d'|' -f4)
+        DNS_LABEL=$(echo "$APP_CONFIG" | cut -d'|' -f5)
+
+        echo "🏷️  Configuring DNS for: $APP_NAME"
+        cd iac && task dns:set-label SERVICE="$SERVICE" NS="$NAMESPACE" LABEL="$DNS_LABEL"
+
+  # ===========================================================================
+  # STATUS & MONITORING
+  # ===========================================================================
+  status:
+    desc: "Show status of all components"
+    cmds:
+      - |
+        set -euo pipefail
+
+        echo "📊 DSRP MLOps Platform Status"
+        echo "=============================="
+        echo ""
+
+        # Cluster info
+        echo "🔷 Cluster:"
+        kubectl cluster-info 2>/dev/null | head -2 || echo "   Not connected"
+        echo ""
+
+        # Nodes
+        echo "🔷 Nodes:"
+        kubectl get nodes 2>/dev/null || echo "   Cannot get nodes"
+        echo ""
+
+        # Applications status
+        echo "🔷 Applications:"
+        echo ""
+
+        echo '{{.APPLICATIONS}}' | while IFS='|' read -r NAME NAMESPACE MANIFEST SERVICE DNS_LABEL TYPE; do
+          [ -z "$NAME" ] && continue
+
+          echo "  📦 $NAME (namespace: $NAMESPACE)"
+
+          # Get pods
+          PODS=$(kubectl get pods -n "$NAMESPACE" -l app="$NAME" --no-headers 2>/dev/null || \
+                 kubectl get pods -n "$NAMESPACE" --no-headers 2>/dev/null | head -5)
+
+          if [ -n "$PODS" ]; then
+            echo "$PODS" | awk '{print "     " $1 " - " $3}'
+          else
+            echo "     No pods found"
+          fi
+
+          # Get service IP
+          SVC_IP=$(kubectl get svc "$SERVICE" -n "$NAMESPACE" \
+            -o jsonpath='{.status.loadBalancer.ingress[0].ip}' 2>/dev/null || echo "")
+
+          if [ -n "$SVC_IP" ]; then
+            echo "     URL: http://$SVC_IP"
+          fi
+
+          echo ""
+        done
+
+  status:app:
+    desc: "Show detailed status for a specific application"
+    vars:
+      APP: '{{.APP | default ""}}'
+    preconditions:
+      - sh: '[ -n "{{.APP}}" ]'
+        msg: "Error: APP is required. Usage: task status:app APP=<app-name>"
+    cmds:
+      - |
+        set -euo pipefail
+
+        APP_NAME="{{.APP}}"
+        APP_CONFIG=$(echo '{{.APPLICATIONS}}' | grep "^${APP_NAME}|" || true)
+
+        if [ -z "$APP_CONFIG" ]; then
+          echo "❌ Unknown application: $APP_NAME"
+          exit 1
+        fi
+
+        NAMESPACE=$(echo "$APP_CONFIG" | cut -d'|' -f2)
+        SERVICE=$(echo "$APP_CONFIG" | cut -d'|' -f4)
+
+        echo "📊 Status: $APP_NAME"
+        echo "===================="
+        echo ""
+
+        echo "🔷 Pods:"
+        kubectl get pods -n "$NAMESPACE" -o wide
+        echo ""
+
+        echo "🔷 Services:"
+        kubectl get svc -n "$NAMESPACE"
+        echo ""
+
+        echo "🔷 Recent Events:"
+        kubectl get events -n "$NAMESPACE" --sort-by='.lastTimestamp' | tail -10
+
+  # ===========================================================================
+  # CLEANUP
+  # ===========================================================================
+  destroy:app:
+    desc: "Remove a specific application"
+    vars:
+      APP: '{{.APP | default ""}}'
+    preconditions:
+      - sh: '[ -n "{{.APP}}" ]'
+        msg: "Error: APP is required. Usage: task destroy:app APP=<app-name>"
+    cmds:
+      - |
+        set -euo pipefail
+
+        APP_NAME="{{.APP}}"
+        APP_CONFIG=$(echo '{{.APPLICATIONS}}' | grep "^${APP_NAME}|" || true)
+
+        if [ -z "$APP_CONFIG" ]; then
+          echo "❌ Unknown application: $APP_NAME"
+          exit 1
+        fi
+
+        NAMESPACE=$(echo "$APP_CONFIG" | cut -d'|' -f2)
+        MANIFEST=$(echo "$APP_CONFIG" | cut -d'|' -f3)
+        DEPLOY_TYPE=$(echo "$APP_CONFIG" | cut -d'|' -f6)
+
+        echo "🗑️  Removing: $APP_NAME"
+
+        case "$DEPLOY_TYPE" in
+          kubectl)
+            kubectl delete -f "$MANIFEST" --ignore-not-found
+            ;;
+          helm)
+            helm uninstall "$APP_NAME" -n "$NAMESPACE" 2>/dev/null || echo "   Not installed"
+            ;;
+        esac
+
+        echo "✅ $APP_NAME removed"
+
+  destroy:all:
+    desc: "Remove all applications (keeps infrastructure)"
+    cmds:
+      - task: destroy:app
+        vars: { APP: airflow }
+      - task: destroy:app
+        vars: { APP: qdrant }
+      - task: destroy:app
+        vars: { APP: frontend }
+
+  destroy:infra:
+    desc: "Destroy infrastructure (DANGER: destroys AKS cluster)"
+    dir: ./iac
+    cmds:
+      - |
+        set -euo pipefail
+
+        echo "⚠️  WARNING: This will destroy the AKS cluster and all resources!"
+        echo ""
+        read -p "Type 'yes' to confirm: " CONFIRM
+
+        if [ "$CONFIRM" != "yes" ]; then
+          echo "Aborted."
+          exit 1
+        fi
+
+        terraform destroy -var-file={{.TFVARS_FILE}}
+
+  # ===========================================================================
+  # UTILITIES
+  # ===========================================================================
+  logs:
+    desc: "Show logs for an application"
+    vars:
+      APP: '{{.APP | default ""}}'
+      TAIL: '{{.TAIL | default "100"}}'
+    preconditions:
+      - sh: '[ -n "{{.APP}}" ]'
+        msg: "Error: APP is required. Usage: task logs APP=<app-name>"
+    cmds:
+      - |
+        set -euo pipefail
+
+        APP_NAME="{{.APP}}"
+        APP_CONFIG=$(echo '{{.APPLICATIONS}}' | grep "^${APP_NAME}|" || true)
+
+        if [ -z "$APP_CONFIG" ]; then
+          echo "❌ Unknown application: $APP_NAME"
+          exit 1
+        fi
+
+        NAMESPACE=$(echo "$APP_CONFIG" | cut -d'|' -f2)
+
+        echo "📋 Logs for: $APP_NAME (namespace: $NAMESPACE)"
+        echo ""
+
+        kubectl logs -n "$NAMESPACE" -l app="$APP_NAME" --tail={{.TAIL}} 2>/dev/null || \
+          kubectl logs -n "$NAMESPACE" $(kubectl get pods -n "$NAMESPACE" -o jsonpath='{.items[0].metadata.name}') --tail={{.TAIL}}
+
+  port-forward:
+    desc: "Port-forward to an application"
+    vars:
+      APP: '{{.APP | default ""}}'
+      LOCAL_PORT: '{{.LOCAL_PORT | default "8080"}}'
+    preconditions:
+      - sh: '[ -n "{{.APP}}" ]'
+        msg: "Error: APP is required. Usage: task port-forward APP=<app-name>"
+    cmds:
+      - |
+        set -euo pipefail
+
+        APP_NAME="{{.APP}}"
+        APP_CONFIG=$(echo '{{.APPLICATIONS}}' | grep "^${APP_NAME}|" || true)
+
+        if [ -z "$APP_CONFIG" ]; then
+          echo "❌ Unknown application: $APP_NAME"
+          exit 1
+        fi
+
+        NAMESPACE=$(echo "$APP_CONFIG" | cut -d'|' -f2)
+        SERVICE=$(echo "$APP_CONFIG" | cut -d'|' -f4)
+
+        # Determine port based on app
+        case "$APP_NAME" in
+          qdrant)
+            REMOTE_PORT=6333
+            ;;
+          airflow)
+            REMOTE_PORT=8080
+            ;;
+          *)
+            REMOTE_PORT=80
+            ;;
+        esac
+
+        echo "🔗 Port-forwarding $APP_NAME"
+        echo "   Local: http://localhost:{{.LOCAL_PORT}}"
+        echo "   Press Ctrl+C to stop"
+        echo ""
+
+        kubectl port-forward svc/"$SERVICE" {{.LOCAL_PORT}}:$REMOTE_PORT -n "$NAMESPACE"
+
+  # ===========================================================================
+  # HELPER TASKS
+  # ===========================================================================
+  apps:list:
+    desc: "List all registered applications"
+    cmds:
+      - |
+        echo "📦 Registered Applications"
+        echo "=========================="
+        echo ""
+        echo "Name       | Namespace | Type   | Service           | DNS Label"
+        echo "-----------|-----------|--------|-------------------|---------------"
+        echo '{{.APPLICATIONS}}' | while IFS='|' read -r NAME NAMESPACE MANIFEST SERVICE DNS_LABEL TYPE; do
+          [ -z "$NAME" ] && continue
+          printf "%-10s | %-9s | %-6s | %-17s | %s\n" "$NAME" "$NAMESPACE" "$TYPE" "$SERVICE" "$DNS_LABEL"
+        done
+        echo ""
+        echo "To add a new application, edit the APPLICATIONS variable in Taskfile.yml"
