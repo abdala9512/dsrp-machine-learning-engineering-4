@@ -148,8 +148,8 @@ Obtener API key en: https://www.omdbapi.com/apikey.aspx
 # Para Qdrant local (Docker o port-forward)
 QDRANT_URL = "http://localhost:6333"
 
-# Para Qdrant remoto (AKS)
-export QDRANT_URL="http://qdrant-dsrp.eastus.cloudapp.azure.com:6333"
+# Para Qdrant remoto (AKS) - must specify :80 for qdrant_client
+export QDRANT_URL="http://qdrant-dsrp.eastus.cloudapp.azure.com:80"
 ```
 
 **Cuando ejecutar**:
@@ -217,14 +217,14 @@ export MLFLOW_TRACKING_PASSWORD=token
 docker run -p 6333:6333 -p 6334:6334 qdrant/qdrant
 
 # Opcion 2: Port-forward desde AKS
-kubectl port-forward svc/qdrant 6333:6333
+kubectl port-forward svc/qdrant 6333:80
 ```
 
 ### Qdrant Remoto (AKS)
 
 ```bash
-# Configurar variable de entorno
-export QDRANT_URL="http://qdrant-dsrp.eastus.cloudapp.azure.com:6333"
+# Configurar variable de entorno (must specify :80 for qdrant_client)
+export QDRANT_URL="http://qdrant-dsrp.eastus.cloudapp.azure.com:80"
 
 # Los notebooks detectan automaticamente QDRANT_URL
 ```

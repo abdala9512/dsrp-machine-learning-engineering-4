@@ -135,9 +135,9 @@ tasks:
 
         # Get cluster info from terraform output or use defaults
         cd iac
-        if terraform output -raw resource_group_name &>/dev/null; then
+        if terraform output -raw cluster_name &>/dev/null; then
           RG=$(terraform output -raw resource_group_name)
-          CLUSTER=$(terraform output -raw kubernetes_cluster_name)
+          CLUSTER=$(terraform output -raw cluster_name)
         else
           RG="{{.RESOURCE_GROUP}}"
           CLUSTER="{{.CLUSTER_NAME}}"
@@ -554,9 +554,6 @@ tasks:
 
         # Determine port based on app
         case "$APP_NAME" in
-          qdrant)
-            REMOTE_PORT=6333
-            ;;
           airflow)
             REMOTE_PORT=8080
             ;;

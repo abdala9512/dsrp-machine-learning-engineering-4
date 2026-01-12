@@ -98,7 +98,7 @@ spec:
     app: qdrant
   ports:
     - name: http
-      port: 6333
+      port: 80
       targetPort: 6333
       protocol: TCP
     - name: grpc

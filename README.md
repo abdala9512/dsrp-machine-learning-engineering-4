@@ -319,7 +319,7 @@ Una vez desplegado, los servicios estan disponibles en:
 | Servicio | URL |
 |----------|-----|
 | Frontend | `http://dsrp-frontend.<region>.cloudapp.azure.com` |
-| Qdrant Dashboard | `http://qdrant-dsrp.<region>.cloudapp.azure.com:6333/dashboard` |
+| Qdrant Dashboard | `http://qdrant-dsrp.<region>.cloudapp.azure.com/dashboard` |
 | Airflow UI | `http://airflow-dsrp.<region>.cloudapp.azure.com` |
 
 ## Pipeline de ML

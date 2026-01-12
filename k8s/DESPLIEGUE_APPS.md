@@ -68,14 +68,14 @@ Esto genera un FQDN tipo `qdrant-dsrp.<region>.cloudapp.azure.com`.
 
 ### Acceso
 
-- **Dashboard web**: `http://<FQDN>:6333/dashboard`
-- **REST API**: `http://<FQDN>:6333`
+- **Dashboard web**: `http://<FQDN>/dashboard`
+- **REST API**: `http://<FQDN>` (port 80 → 6333 internally)
 - **gRPC**: `<FQDN>:6334`
 
 Para acceso local via port-forward:
 ```bash
-kubectl port-forward svc/qdrant 6333:6333 6334:6334
-# Dashboard: http://localhost:6333/dashboard
+kubectl port-forward svc/qdrant 8080:80 6334:6334
+# Dashboard: http://localhost:8080/dashboard
 ```
 
 ### Conexión desde Python
@@ -83,10 +83,9 @@ kubectl port-forward svc/qdrant 6333:6333 6334:6334
 ```python
 from qdrant_client import QdrantClient
 
-# Usando el DNS label
+# Usando el DNS label (must specify :80 - qdrant_client defaults to 6333)
 client = QdrantClient(
-    host="qdrant-dsrp.<region>.cloudapp.azure.com",
-    port=6333,
+    url="http://qdrant-dsrp.<region>.cloudapp.azure.com:80",
     # grpc_port=6334,  # Para conexión gRPC
     # prefer_grpc=True,
 )
