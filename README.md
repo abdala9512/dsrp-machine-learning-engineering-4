@@ -114,8 +114,8 @@ Sistema con backend inteligente que incluye retrieval semantico y re-ranking con
 │   ├── feature_engineering.ipynb  # Creacion de features y embeddings
 │   ├── synthetic_queries.ipynb    # Generacion de queries LTR
 │   ├── modeling.ipynb             # Entrenamiento de modelos
-│   ├── serving.ipynb              # Servicio de inferencia
-│   └── lgbm_ranker_hyperopt.py    # Optimizacion de hiperparametros
+│   ├── qdrant_indexing.ipynb      # Indexacion en Qdrant
+│   └── serving.ipynb              # Busquedas y recomendaciones
 ├── .github/
 │   └── workflows/                 # CI/CD con GitHub Actions
 │       └── frontend-docker.yml    # Build y push de imagen Docker
@@ -127,7 +127,7 @@ Sistema con backend inteligente que incluye retrieval semantico y re-ranking con
 
 | Categoria | Tecnologias |
 |-----------|-------------|
-| **ML Pipeline** | Python 3.11+, Polars, LightGBM, Hyperopt, Sentence Transformers |
+| **ML Pipeline** | Python 3.11+, Polars, LightGBM, Sentence Transformers |
 | **Experiment Tracking** | MLflow, DagsHub |
 | **Vector Database** | Qdrant |
 | **Orchestration** | Apache Airflow 3 (KubernetesExecutor) |
@@ -223,9 +223,6 @@ uv run jupyter lab
 # 4. modeling.ipynb
 # 5. qdrant_indexing.ipynb (indexar en Qdrant)
 # 6. serving.ipynb (probar busquedas)
-
-# O ejecutar optimizacion de hiperparametros directamente
-uv run python lgbm_ranker_hyperopt.py --data-path data/ltr_imdb_dataset.parquet --max-evals 25
 ```
 
 #### 2.2 Frontend (app/frontend/)
@@ -351,9 +348,13 @@ El pipeline de ML sigue estos pasos:
    - Tracking con MLflow
    - Evaluacion con NDCG@K
 
-5. **Hyperparameter Optimization** (`lgbm_ranker_hyperopt.py`)
-   - Optimizacion con Hyperopt + MLflow
-   - Busqueda automatica de mejores parametros
+5. **Qdrant Indexing** (`qdrant_indexing.ipynb`)
+   - Indexa peliculas en Qdrant
+   - Busqueda hibrida (dense + BM25)
+
+6. **Serving** (`serving.ipynb`)
+   - Cliente para busquedas y recomendaciones
+   - Valida conexion a Qdrant existente
 
 ## Contribucion
 

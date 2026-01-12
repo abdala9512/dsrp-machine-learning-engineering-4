@@ -172,36 +172,7 @@ export QDRANT_URL="http://qdrant-dsrp.eastus.cloudapp.azure.com:6333"
 
 **Nota**: Este notebook NO indexa datos. Para indexar, usar `qdrant_indexing.ipynb`.
 
-## Scripts Standalone
-
-### lgbm_ranker_hyperopt.py
-
-Script para optimizacion de hiperparametros usando Hyperopt + MLflow.
-
-```bash
-# Ejecutar optimizacion
-uv run python lgbm_ranker_hyperopt.py \
-  --data-path data/ltr_imdb_dataset.parquet \
-  --max-evals 25
-
-# Todas las opciones
-uv run python lgbm_ranker_hyperopt.py \
-  --data-path data/ltr_imdb_dataset.parquet \
-  --max-evals 50 \
-  --k 10 \
-  --valid-frac 0.2 \
-  --seed 42 \
-  --experiment-name "LTR Hyperopt" \
-  --tracking-uri http://localhost:5000
-```
-
-**Parametros optimizados**:
-- `num_leaves`: 20-150
-- `learning_rate`: 0.01-0.3
-- `min_data_in_leaf`: 10-100
-- `lambda_l1`, `lambda_l2`: Regularizacion L1/L2
-- `feature_fraction`: Subsampling de features
-- `bagging_fraction`: Subsampling de datos
+## Scripts Auxiliares
 
 ### ml_utils.py
 
@@ -268,7 +239,6 @@ Dashboard web: `http://<QDRANT_URL>/dashboard`
 | `lightgbm` | >=4.0 | Modelos de ranking (LambdaRank) |
 | `sentence-transformers` | >=2.2 | Generacion de embeddings |
 | `qdrant-client` | >=1.7 | Cliente para Qdrant |
-| `hyperopt` | >=0.2 | Optimizacion de hiperparametros |
 | `mlflow` | >=2.10 | Tracking de experimentos |
 | `httpx` | >=0.26 | Cliente HTTP async para APIs |
 | `python-dotenv` | >=1.0 | Carga de variables de entorno |

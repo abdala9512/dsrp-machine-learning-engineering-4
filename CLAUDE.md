@@ -31,9 +31,6 @@ cd notebooks
 # Install dependencies with uv
 uv sync
 
-# Run hyperparameter optimization for LightGBM ranker
-uv run python lgbm_ranker_hyperopt.py --data-path data/ltr_imdb_dataset.parquet --max-evals 25
-
 # Start JupyterLab
 uv run jupyter lab
 ```
@@ -63,9 +60,10 @@ kubectl get svc frontend
 - **data_collection.ipynb**: Downloads IMDB datasets (title.basics, title.ratings) and enriches with OMDB API data. Outputs parquet files.
 - **feature_engineering.ipynb**: Creates embeddings and similarity features for learning-to-rank (LTR).
 - **modeling.ipynb**: Trains LightGBM ranker models with MLflow tracking.
-- **lgbm_ranker_hyperopt.py**: Standalone hyperparameter optimization script using Hyperopt + MLflow.
+- **qdrant_indexing.ipynb**: Indexes movies in Qdrant for hybrid search (dense + BM25).
+- **serving.ipynb**: Client for searching and getting recommendations from Qdrant.
 
-Key libraries: polars (data), lightgbm (ranking), hyperopt (tuning), mlflow (tracking), qdrant-client (vector storage), sentence-transformers (embeddings).
+Key libraries: polars (data), lightgbm (ranking), mlflow (tracking), qdrant-client (vector storage), sentence-transformers (embeddings).
 
 ### Infrastructure (iac/)
 Terraform configuration for AKS cluster on Azure:
