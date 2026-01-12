@@ -126,135 +126,193 @@ Para ajustar, edita `k8s/qdrant.yaml` según tus necesidades.
 
 ---
 
-## Despliegue de Dagster (ML Pipelines)
+## Despliegue de Apache Airflow 3 (ML Pipelines)
 
-Dagster es una plataforma moderna para orquestar pipelines de datos y ML. Incluye UI web, scheduler, y soporte nativo para Kubernetes.
+Apache Airflow es una plataforma de orquestacion de workflows. La version 3 incluye mejoras significativas en la UI y soporte nativo para Kubernetes.
 
 ### Componentes incluidos
-- **Webserver**: UI para monitorear y ejecutar pipelines
-- **Daemon**: Scheduler, sensors y monitoreo de runs
+- **Webserver**: UI para monitorear y ejecutar DAGs
+- **Scheduler**: Programacion y ejecucion de tareas
+- **Triggerer**: Soporte para operadores diferibles
 - **PostgreSQL**: Base de datos para metadatos
-- **User Deployments**: Pods con tu código de pipelines
+- **KubernetesExecutor**: Ejecuta cada task como un pod
 
 ### Prerrequisitos
 - Cluster AKS configurado y accesible via `kubectl`
 - Helm 3.x instalado
 - Al menos 2GB de RAM disponible en el cluster
 
-### Instalación paso a paso
+### Instalacion paso a paso
 
-1) Agregar el repositorio de Helm de Dagster:
+1) Agregar el repositorio de Helm de Airflow:
 ```bash
-helm repo add dagster https://dagster-io.github.io/helm
+helm repo add apache-airflow https://airflow.apache.org
 helm repo update
 ```
 
-2) Crear el namespace de Dagster:
+2) Crear el namespace de Airflow:
 ```bash
-kubectl apply -f k8s/dagster-namespace.yaml
+kubectl apply -f k8s/airflow-namespace.yaml
 ```
 
-3) Instalar Dagster con Helm:
+3) Instalar Airflow con Helm:
 ```bash
-helm install dagster dagster/dagster \
-    --namespace dagster \
-    --values k8s/dagster-values.yaml \
+helm install airflow apache-airflow/airflow \
+    --namespace airflow \
+    --values k8s/airflow-values.yaml \
     --timeout 10m
 ```
 
-4) Verificar que todos los pods estén corriendo:
+4) Verificar que todos los pods esten corriendo:
 ```bash
-kubectl get pods -n dagster -w
+kubectl get pods -n airflow -w
 ```
-Esperar hasta que todos los pods estén en estado `Running`:
-- `dagster-dagster-webserver-*` (UI web)
-- `dagster-dagster-daemon-*` (scheduler)
-- `dagster-postgresql-*` (base de datos)
-- `dagster-dagster-user-deployments-*` (código de usuario)
+Esperar hasta que todos los pods esten en estado `Running`:
+- `airflow-webserver-*` (UI web)
+- `airflow-scheduler-*` (scheduler)
+- `airflow-triggerer-*` (triggerer)
+- `airflow-postgresql-*` (base de datos)
 
-5) Obtener la IP pública del servicio:
+5) Obtener la IP publica del servicio:
 ```bash
-kubectl get svc -n dagster dagster-dagster-webserver
+kubectl get svc -n airflow airflow-webserver
 ```
 
 6) (Opcional) Asignar un DNS label:
 ```bash
 cd iac
-task dns:set-label SERVICE=dagster-dagster-webserver NS=dagster LABEL=dagster-dsrp
+task dns:set-label SERVICE=airflow-webserver NS=airflow LABEL=airflow-dsrp
 ```
 
-### Acceso a la UI de Dagster
+### Acceso a la UI de Airflow
 
 Una vez desplegado, accede a la UI web:
-- **URL**: `http://<IP_PUBLICA>` o `http://dagster-dsrp.<region>.cloudapp.azure.com`
+- **URL**: `http://<IP_PUBLICA>` o `http://airflow-dsrp.<region>.cloudapp.azure.com`
+- **Usuario**: `admin`
+- **Password**: `admin123`
 
 Para acceso local via port-forward:
 ```bash
-kubectl port-forward svc/dagster-dagster-webserver 8080:80 -n dagster
+kubectl port-forward svc/airflow-webserver 8080:80 -n airflow
 # Acceder en: http://localhost:8080
 ```
 
-### Configuración del cliente (dagster)
+### Subir DAGs al cluster
 
-Para ejecutar pipelines desde notebooks/scripts:
+Airflow 3 facilita la gestion de DAGs. Hay varias opciones:
 
-1) Instalar dagster:
+**Opcion 1: Copiar DAGs manualmente**
 ```bash
-pip install dagster dagster-webserver
-# o con uv:
-uv add dagster dagster-webserver
+# Copiar un archivo DAG al pod del scheduler
+kubectl cp mi_dag.py airflow/airflow-scheduler-0:/opt/airflow/dags/
 ```
 
-2) Ejemplo básico de definición:
+**Opcion 2: Usar Git-Sync (recomendado)**
+
+Edita `k8s/airflow-values.yaml` y habilita git-sync:
+```yaml
+dags:
+  gitSync:
+    enabled: true
+    repo: https://github.com/tu-usuario/tu-repo.git
+    branch: main
+    subPath: dags
+    wait: 60
+```
+
+Luego actualiza el deployment:
+```bash
+helm upgrade airflow apache-airflow/airflow -n airflow -f k8s/airflow-values.yaml
+```
+
+### Ejemplo de DAG
+
 ```python
-from dagster import asset, Definitions
+from datetime import datetime
+from airflow import DAG
+from airflow.operators.python import PythonOperator
 
-@asset
-def my_first_asset():
-    """Un asset simple que retorna datos."""
-    return [1, 2, 3]
+def extract():
+    print("Extrayendo datos...")
+    return {"data": [1, 2, 3]}
 
-@asset
-def my_second_asset(my_first_asset):
-    """Asset que depende del primero."""
-    return [x * 2 for x in my_first_asset]
+def transform(ti):
+    data = ti.xcom_pull(task_ids="extract")
+    print(f"Transformando: {data}")
+    return {"transformed": [x * 2 for x in data["data"]]}
 
-defs = Definitions(
-    assets=[my_first_asset, my_second_asset],
-)
+def load(ti):
+    data = ti.xcom_pull(task_ids="transform")
+    print(f"Cargando: {data}")
+
+with DAG(
+    dag_id="ml_pipeline_example",
+    start_date=datetime(2025, 1, 1),
+    schedule="@daily",
+    catchup=False,
+) as dag:
+
+    t1 = PythonOperator(task_id="extract", python_callable=extract)
+    t2 = PythonOperator(task_id="transform", python_callable=transform)
+    t3 = PythonOperator(task_id="load", python_callable=load)
+
+    t1 >> t2 >> t3
+```
+
+### Configuracion del cliente (airflow)
+
+Para desarrollar DAGs localmente:
+
+1) Instalar airflow:
+```bash
+pip install apache-airflow
+# o con uv:
+uv add apache-airflow
+```
+
+2) Inicializar entorno local:
+```bash
+export AIRFLOW_HOME=~/airflow
+airflow db init
+airflow users create --username admin --password admin --firstname Admin --lastname User --role Admin --email admin@example.com
 ```
 
 3) Ejecutar localmente:
 ```bash
-dagster dev -f my_pipeline.py
-# Abre http://localhost:3000
+airflow standalone
+# Abre http://localhost:8080
 ```
 
-### Desinstalación
+### Desinstalacion
 
-Para eliminar Dagster del cluster:
+Para eliminar Airflow del cluster:
 ```bash
-helm uninstall dagster -n dagster
-kubectl delete namespace dagster
+helm uninstall airflow -n airflow
+kubectl delete namespace airflow
 ```
 
 ### Troubleshooting
 
 - **Pods en CrashLoopBackOff**: Verificar recursos disponibles
   ```bash
-  kubectl describe pod -l app.kubernetes.io/name=dagster -n dagster
-  kubectl logs -l app.kubernetes.io/name=dagster -n dagster
+  kubectl describe pod -l component=webserver -n airflow
+  kubectl logs -l component=webserver -n airflow
   ```
 
 - **Webserver no accesible**: Verificar que el LoadBalancer tenga IP
   ```bash
-  kubectl get svc -n dagster
+  kubectl get svc -n airflow
   ```
 
 - **PostgreSQL no inicia**: Verificar PVC y recursos
   ```bash
-  kubectl describe pvc -n dagster
-  kubectl logs -l app.kubernetes.io/name=postgresql -n dagster
+  kubectl describe pvc -n airflow
+  kubectl logs -l app.kubernetes.io/name=postgresql -n airflow
   ```
 
-> Nota: Este es un despliegue educativo. Para producción, considera usar PostgreSQL externo (Azure Database for PostgreSQL) y configurar autenticación.
+- **DAGs no aparecen**: Verificar permisos y ubicacion
+  ```bash
+  kubectl exec -it airflow-scheduler-0 -n airflow -- ls -la /opt/airflow/dags/
+  ```
+
+> Nota: Este es un despliegue educativo. Para produccion, considera usar PostgreSQL externo (Azure Database for PostgreSQL), configurar autenticacion robusta, y habilitar HTTPS via Ingress.

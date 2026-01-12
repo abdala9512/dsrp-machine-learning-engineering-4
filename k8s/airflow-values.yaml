@@ -1,0 +1,166 @@
+# Apache Airflow Helm Chart - Valores para AKS
+# Documentacion: https://airflow.apache.org/docs/helm-chart/stable/index.html
+#
+# Uso:
+#   helm repo add apache-airflow https://airflow.apache.org
+#   helm install airflow apache-airflow/airflow -n airflow -f k8s/airflow-values.yaml
+
+# Executor: KubernetesExecutor para ejecutar DAGs como pods individuales
+executor: "KubernetesExecutor"
+
+# Imagen de Airflow
+images:
+  airflow:
+    repository: apache/airflow
+    tag: "3.0.1"
+    pullPolicy: IfNotPresent
+
+# Configuracion del Webserver
+webserver:
+  replicas: 1
+  service:
+    type: LoadBalancer
+    ports:
+      - name: airflow-ui
+        port: 80
+        targetPort: 8080
+  resources:
+    requests:
+      cpu: 200m
+      memory: 512Mi
+    limits:
+      cpu: 500m
+      memory: 1Gi
+  defaultUser:
+    enabled: true
+    role: Admin
+    username: admin
+    email: admin@example.com
+    firstName: Admin
+    lastName: User
+    password: admin123
+
+# Scheduler
+scheduler:
+  replicas: 1
+  resources:
+    requests:
+      cpu: 200m
+      memory: 512Mi
+    limits:
+      cpu: 500m
+      memory: 1Gi
+
+# Triggerer (para deferrable operators)
+triggerer:
+  enabled: true
+  replicas: 1
+  resources:
+    requests:
+      cpu: 100m
+      memory: 256Mi
+    limits:
+      cpu: 300m
+      memory: 512Mi
+
+# Workers (no necesarios con KubernetesExecutor)
+workers:
+  enabled: false
+
+# PostgreSQL (base de datos de metadatos)
+postgresql:
+  enabled: true
+  auth:
+    username: airflow
+    password: airflow123
+    database: airflow
+  primary:
+    persistence:
+      enabled: true
+      size: 5Gi
+    resources:
+      requests:
+        cpu: 100m
+        memory: 256Mi
+      limits:
+        cpu: 500m
+        memory: 512Mi
+
+# Redis (no necesario con KubernetesExecutor)
+redis:
+  enabled: false
+
+# DAGs - Sincronizacion con Git
+dags:
+  persistence:
+    enabled: true
+    size: 1Gi
+  gitSync:
+    enabled: false
+    # Para habilitar sincronizacion con Git:
+    # enabled: true
+    # repo: https://github.com/tu-usuario/tu-repo.git
+    # branch: main
+    # subPath: dags
+    # wait: 60
+
+# Logs
+logs:
+  persistence:
+    enabled: true
+    size: 5Gi
+
+# Configuracion extra de Airflow
+config:
+  core:
+    dags_are_paused_at_creation: "True"
+    load_examples: "False"
+    executor: "KubernetesExecutor"
+  webserver:
+    expose_config: "True"
+    rbac: "True"
+  kubernetes:
+    delete_worker_pods: "True"
+    delete_worker_pods_on_failure: "False"
+
+# Variables de entorno adicionales
+env:
+  - name: AIRFLOW__CORE__FERNET_KEY
+    value: "81HqDtbqAywKSOumSha3BhWNOdQ26slT6K0YaZeZyPs="
+
+# ServiceAccount para KubernetesExecutor
+serviceAccount:
+  create: true
+  name: airflow
+
+# RBAC
+rbac:
+  create: true
+  createSCCRoleBinding: false
+
+# Flower (no necesario con KubernetesExecutor)
+flower:
+  enabled: false
+
+# StatsD (metricas)
+statsd:
+  enabled: false
+
+# PgBouncer (connection pooling)
+pgbouncer:
+  enabled: false
+
+# Ingress (deshabilitado - usamos LoadBalancer)
+ingress:
+  enabled: false
+
+# Resources para pods de workers (KubernetesExecutor)
+# Estos valores se usan cuando se crean pods para ejecutar tasks
+kubernetesPodTemplate:
+  resources:
+    requests:
+      cpu: 200m
+      memory: 512Mi
+    limits:
+      cpu: 1000m
+      memory: 2Gi

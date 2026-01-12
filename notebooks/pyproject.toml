@@ -6,9 +6,8 @@ readme = "README.md"
 requires-python = ">=3.11"
 dependencies = [
     "aiohttp>=3.13.2",
+    "apache-airflow>=3.0.0",
     "dagshub>=0.6.4",
-    "dagster>=1.9.0",
-    "dagster-webserver>=1.9.0",
     "fastembed>=0.7.4",
     "hyperopt>=0.2.7",
     "jupyterlab>=4.5.0",
