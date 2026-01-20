@@ -1,0 +1,79 @@
+version: '3.8'
+
+# =============================================================================
+# DSRP ML Pipeline - Simple Local Airflow Setup
+# =============================================================================
+# Usage:
+#   docker-compose up -d
+#
+# Access:
+#   Airflow UI: http://localhost:8080 (admin/admin)
+#   Qdrant:     http://localhost:6333
+#
+# Prerequisites:
+#   Ollama must be running locally: ollama serve
+# =============================================================================
+
+services:
+  # ===========================================================================
+  # Airflow Standalone (webserver + scheduler in one container)
+  # ===========================================================================
+  airflow:
+    image: apache/airflow:3.0.1
+    environment:
+      # Use SQLite and SequentialExecutor for simplicity
+      AIRFLOW__DATABASE__SQL_ALCHEMY_CONN: sqlite:////opt/airflow/airflow.db
+      AIRFLOW__CORE__EXECUTOR: SequentialExecutor
+      AIRFLOW__CORE__LOAD_EXAMPLES: 'false'
+      AIRFLOW__WEBSERVER__EXPOSE_CONFIG: 'true'
+      # DSRP Pipeline Configuration
+      DSRP_DATA_DIR: /opt/airflow/data
+      DSRP_QDRANT_URL: http://qdrant:6333
+      DSRP_QDRANT_COLLECTION: imdb-movies-hybrid
+      DSRP_OLLAMA_URL: http://host.docker.internal:11434/api/generate
+      DSRP_OLLAMA_MODEL: ${OLLAMA_MODEL:-llama3.2:3b}
+      DSRP_EMBEDDING_MODEL: sentence-transformers/all-MiniLM-L6-v2
+      OMDB_API_KEY: ${OMDB_API_KEY:-}
+      MLFLOW_TRACKING_URI: ${MLFLOW_TRACKING_URI:-}
+      _PIP_ADDITIONAL_REQUIREMENTS: >-
+        polars==1.17.1
+        sentence-transformers==3.3.1
+        qdrant-client==1.12.1
+        lightgbm==4.5.0
+        hyperopt==0.2.7
+        mlflow==2.19.0
+        aiohttp==3.11.11
+        orjson==3.10.12
+        azure-storage-blob==12.24.0
+    volumes:
+      - ./dags:/opt/airflow/dags
+      - airflow-data:/opt/airflow
+      - ../data:/opt/airflow/data
+    ports:
+      - "8080:8080"
+    command: standalone
+    healthcheck:
+      test: ["CMD", "curl", "--fail", "http://localhost:8080/health"]
+      interval: 30s
+      timeout: 10s
+      retries: 5
+    restart: unless-stopped
+
+  # ===========================================================================
+  # Qdrant Vector Database
+  # ===========================================================================
+  qdrant:
+    image: qdrant/qdrant:v1.12.1
+    ports:
+      - "6333:6333"
+    volumes:
+      - qdrant-data:/qdrant/storage
+    restart: unless-stopped
+
+volumes:
+  airflow-data:
+  qdrant-data:
+
+networks:
+  default:
+    name: dsrp-ml-network

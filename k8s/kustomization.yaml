@@ -1,0 +1,30 @@
+apiVersion: kustomize.config.k8s.io/v1beta1
+kind: Kustomization
+
+metadata:
+  name: dsrp-ml-pipeline
+
+namespace: default
+
+resources:
+  - ollama-configmap.yaml
+  - ollama-deployment.yaml
+  - azure-storage-secret.yaml
+
+# Common labels for all resources
+commonLabels:
+  project: dsrp-ml-pipeline
+  environment: development
+
+# Image customization (can override in overlays)
+images:
+  - name: ollama/ollama
+    newTag: latest
+
+# ConfigMap generator for dynamic config
+configMapGenerator:
+  - name: pipeline-config
+    literals:
+      - QDRANT_URL=http://qdrant:6333
+      - QDRANT_COLLECTION=imdb-movies-hybrid
+      - EMBEDDING_MODEL=sentence-transformers/all-MiniLM-L6-v2

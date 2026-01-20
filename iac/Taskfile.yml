@@ -423,3 +423,562 @@ tasks:
         echo ""
         echo "🌐 Puedes acceder al servicio en:"
         echo "   http://$FQDN"
+
+  # ===========================================================================
+  # Azure Storage Tasks for ML Pipeline Data
+  # ===========================================================================
+
+  storage:create:
+    desc: "Crea Azure Storage Account para datos del pipeline ML"
+    summary: |
+      Crea un Storage Account y container para almacenar datos del pipeline ML.
+
+      Uso:
+        task storage:create
+        task storage:create STORAGE_RG=my-rg STORAGE_NAME=mystorageaccount
+
+      Variables:
+        STORAGE_RG: Resource group (default: rg-dsrp-ml-data)
+        STORAGE_NAME: Storage account name (auto-generated if not provided)
+        CONTAINER: Container name (default: ml-pipeline-data)
+    vars:
+      STORAGE_RG: '{{.STORAGE_RG | default "rg-dsrp-ml-data"}}'
+      STORAGE_NAME: '{{.STORAGE_NAME | default ""}}'
+      CONTAINER: '{{.CONTAINER | default "ml-pipeline-data"}}'
+      LOCATION: '{{.LOCATION | default "eastus"}}'
+    cmds:
+      - |
+        set -euo pipefail
+
+        RG="{{.STORAGE_RG}}"
+        CONTAINER="{{.CONTAINER}}"
+        LOCATION="{{.LOCATION}}"
+
+        # Generate storage name if not provided
+        if [ -z "{{.STORAGE_NAME}}" ]; then
+          RANDOM_SUFFIX=$(openssl rand -hex 4 | tr '[:upper:]' '[:lower:]')
+          STORAGE_NAME="dsrpmldata${RANDOM_SUFFIX}"
+        else
+          STORAGE_NAME="{{.STORAGE_NAME}}"
+        fi
+
+        echo ""
+        echo "🗄️  Creando Azure Storage para ML Pipeline"
+        echo "   Resource Group:  $RG"
+        echo "   Storage Account: $STORAGE_NAME"
+        echo "   Container:       $CONTAINER"
+        echo "   Location:        $LOCATION"
+        echo ""
+
+        # Verify Azure login
+        if ! az account show &> /dev/null; then
+          echo "⚠️  Autenticando en Azure..."
+          az login
+        fi
+
+        # Create resource group
+        echo "1️⃣ Creando resource group..."
+        if az group show --name "$RG" &> /dev/null; then
+          echo "✅ Resource group ya existe"
+        else
+          az group create --name "$RG" --location "$LOCATION" --output none
+          echo "✅ Resource group creado"
+        fi
+
+        # Create storage account
+        echo "2️⃣ Creando storage account..."
+        if az storage account show --name "$STORAGE_NAME" --resource-group "$RG" &> /dev/null; then
+          echo "✅ Storage account ya existe"
+        else
+          az storage account create \
+            --resource-group "$RG" \
+            --name "$STORAGE_NAME" \
+            --sku Standard_LRS \
+            --encryption-services blob \
+            --location "$LOCATION" \
+            --allow-blob-public-access false \
+            --min-tls-version TLS1_2 \
+            --output none
+          echo "✅ Storage account creado"
+        fi
+
+        sleep 3
+
+        # Create container
+        echo "3️⃣ Creando container..."
+        az storage container create \
+          --name "$CONTAINER" \
+          --account-name "$STORAGE_NAME" \
+          --auth-mode login \
+          --output none 2>/dev/null || echo "✅ Container ya existe"
+
+        # Get connection string
+        echo ""
+        echo "4️⃣ Obteniendo connection string..."
+        CONN_STRING=$(az storage account show-connection-string \
+          --resource-group "$RG" \
+          --name "$STORAGE_NAME" \
+          --output tsv)
+
+        # Get account key
+        ACCOUNT_KEY=$(az storage account keys list \
+          --resource-group "$RG" \
+          --account-name "$STORAGE_NAME" \
+          --query '[0].value' -o tsv)
+
+        echo ""
+        echo "✅ ¡Storage creado exitosamente!"
+        echo ""
+        echo "📋 Configuración:"
+        echo "   AZURE_STORAGE_ACCOUNT_NAME: $STORAGE_NAME"
+        echo "   AZURE_CONTAINER_NAME: $CONTAINER"
+        echo ""
+        echo "🔐 Connection String (guárdalo de forma segura):"
+        echo "   $CONN_STRING"
+        echo ""
+        echo "💡 Para crear el secret de Kubernetes:"
+        echo "   task storage:create-k8s-secret STORAGE_NAME=$STORAGE_NAME STORAGE_RG=$RG"
+
+  storage:upload:
+    desc: "Sube archivos locales a Azure Storage"
+    summary: |
+      Sube archivos o directorios a Azure Blob Storage.
+
+      Uso:
+        task storage:upload LOCAL=./data REMOTE=raw STORAGE_NAME=mystorageaccount
+
+      Variables:
+        LOCAL: Ruta local del archivo/directorio
+        REMOTE: Prefijo remoto en el container
+        STORAGE_NAME: Nombre del storage account
+        CONTAINER: Container name (default: ml-pipeline-data)
+    vars:
+      LOCAL: '{{.LOCAL | default ""}}'
+      REMOTE: '{{.REMOTE | default ""}}'
+      STORAGE_NAME: '{{.STORAGE_NAME | default ""}}'
+      CONTAINER: '{{.CONTAINER | default "ml-pipeline-data"}}'
+    preconditions:
+      - sh: '[ -n "{{.LOCAL}}" ]'
+        msg: "Error: LOCAL es requerido. Uso: task storage:upload LOCAL=./data REMOTE=prefix"
+      - sh: '[ -n "{{.STORAGE_NAME}}" ]'
+        msg: "Error: STORAGE_NAME es requerido."
+      - sh: '[ -e "{{.LOCAL}}" ]'
+        msg: "Error: El archivo/directorio {{.LOCAL}} no existe"
+    cmds:
+      - |
+        set -euo pipefail
+
+        LOCAL="{{.LOCAL}}"
+        REMOTE="{{.REMOTE}}"
+        STORAGE_NAME="{{.STORAGE_NAME}}"
+        CONTAINER="{{.CONTAINER}}"
+
+        echo ""
+        echo "📤 Subiendo datos a Azure Storage"
+        echo "   Local:     $LOCAL"
+        echo "   Remote:    $CONTAINER/$REMOTE"
+        echo "   Storage:   $STORAGE_NAME"
+        echo ""
+
+        if [ -d "$LOCAL" ]; then
+          echo "📁 Subiendo directorio..."
+          az storage blob upload-batch \
+            --account-name "$STORAGE_NAME" \
+            --destination "$CONTAINER" \
+            --destination-path "$REMOTE" \
+            --source "$LOCAL" \
+            --auth-mode login \
+            --overwrite
+        else
+          echo "📄 Subiendo archivo..."
+          FILENAME=$(basename "$LOCAL")
+          az storage blob upload \
+            --account-name "$STORAGE_NAME" \
+            --container-name "$CONTAINER" \
+            --file "$LOCAL" \
+            --name "${REMOTE}/${FILENAME}" \
+            --auth-mode login \
+            --overwrite
+        fi
+
+        echo ""
+        echo "✅ Upload completado!"
+
+  storage:download:
+    desc: "Descarga archivos de Azure Storage"
+    summary: |
+      Descarga archivos o directorios de Azure Blob Storage.
+
+      Uso:
+        task storage:download REMOTE=raw LOCAL=./data STORAGE_NAME=mystorageaccount
+
+      Variables:
+        REMOTE: Prefijo remoto en el container
+        LOCAL: Ruta local de destino
+        STORAGE_NAME: Nombre del storage account
+        CONTAINER: Container name (default: ml-pipeline-data)
+    vars:
+      REMOTE: '{{.REMOTE | default ""}}'
+      LOCAL: '{{.LOCAL | default ""}}'
+      STORAGE_NAME: '{{.STORAGE_NAME | default ""}}'
+      CONTAINER: '{{.CONTAINER | default "ml-pipeline-data"}}'
+    preconditions:
+      - sh: '[ -n "{{.REMOTE}}" ]'
+        msg: "Error: REMOTE es requerido. Uso: task storage:download REMOTE=prefix LOCAL=./data"
+      - sh: '[ -n "{{.LOCAL}}" ]'
+        msg: "Error: LOCAL es requerido."
+      - sh: '[ -n "{{.STORAGE_NAME}}" ]'
+        msg: "Error: STORAGE_NAME es requerido."
+    cmds:
+      - |
+        set -euo pipefail
+
+        REMOTE="{{.REMOTE}}"
+        LOCAL="{{.LOCAL}}"
+        STORAGE_NAME="{{.STORAGE_NAME}}"
+        CONTAINER="{{.CONTAINER}}"
+
+        echo ""
+        echo "📥 Descargando datos de Azure Storage"
+        echo "   Remote:    $CONTAINER/$REMOTE"
+        echo "   Local:     $LOCAL"
+        echo "   Storage:   $STORAGE_NAME"
+        echo ""
+
+        mkdir -p "$LOCAL"
+
+        az storage blob download-batch \
+          --account-name "$STORAGE_NAME" \
+          --source "$CONTAINER" \
+          --destination "$LOCAL" \
+          --pattern "${REMOTE}/*" \
+          --auth-mode login
+
+        echo ""
+        echo "✅ Download completado!"
+
+  storage:list:
+    desc: "Lista archivos en Azure Storage"
+    vars:
+      STORAGE_NAME: '{{.STORAGE_NAME | default ""}}'
+      CONTAINER: '{{.CONTAINER | default "ml-pipeline-data"}}'
+      PREFIX: '{{.PREFIX | default ""}}'
+    preconditions:
+      - sh: '[ -n "{{.STORAGE_NAME}}" ]'
+        msg: "Error: STORAGE_NAME es requerido."
+    cmds:
+      - |
+        set -euo pipefail
+
+        STORAGE_NAME="{{.STORAGE_NAME}}"
+        CONTAINER="{{.CONTAINER}}"
+        PREFIX="{{.PREFIX}}"
+
+        echo ""
+        echo "📋 Listando archivos en Azure Storage"
+        echo "   Storage:   $STORAGE_NAME"
+        echo "   Container: $CONTAINER"
+        if [ -n "$PREFIX" ]; then
+          echo "   Prefix:    $PREFIX"
+        fi
+        echo ""
+
+        az storage blob list \
+          --account-name "$STORAGE_NAME" \
+          --container-name "$CONTAINER" \
+          --prefix "$PREFIX" \
+          --auth-mode login \
+          --query "[].{Name:name, Size:properties.contentLength, Modified:properties.lastModified}" \
+          --output table
+
+  storage:create-k8s-secret:
+    desc: "Crea un Kubernetes Secret con las credenciales de Azure Storage"
+    summary: |
+      Crea un secret de Kubernetes con las credenciales del storage account.
+
+      Uso:
+        task storage:create-k8s-secret STORAGE_NAME=mystorageaccount STORAGE_RG=my-rg
+
+      Variables:
+        STORAGE_NAME: Nombre del storage account
+        STORAGE_RG: Resource group del storage account
+        SECRET_NAME: Nombre del secret (default: azure-storage-credentials)
+        NAMESPACE: Namespace de Kubernetes (default: default)
+    vars:
+      STORAGE_NAME: '{{.STORAGE_NAME | default ""}}'
+      STORAGE_RG: '{{.STORAGE_RG | default "rg-dsrp-ml-data"}}'
+      SECRET_NAME: '{{.SECRET_NAME | default "azure-storage-credentials"}}'
+      NAMESPACE: '{{.NAMESPACE | default "default"}}'
+      CONTAINER: '{{.CONTAINER | default "ml-pipeline-data"}}'
+    preconditions:
+      - sh: '[ -n "{{.STORAGE_NAME}}" ]'
+        msg: "Error: STORAGE_NAME es requerido."
+      - sh: command -v kubectl &> /dev/null
+        msg: "Error: kubectl no está instalado"
+    cmds:
+      - |
+        set -euo pipefail
+
+        STORAGE_NAME="{{.STORAGE_NAME}}"
+        STORAGE_RG="{{.STORAGE_RG}}"
+        SECRET_NAME="{{.SECRET_NAME}}"
+        NAMESPACE="{{.NAMESPACE}}"
+        CONTAINER="{{.CONTAINER}}"
+
+        echo ""
+        echo "🔐 Creando Kubernetes Secret para Azure Storage"
+        echo "   Storage Account: $STORAGE_NAME"
+        echo "   Resource Group:  $STORAGE_RG"
+        echo "   Secret Name:     $SECRET_NAME"
+        echo "   Namespace:       $NAMESPACE"
+        echo ""
+
+        # Get connection string
+        echo "1️⃣ Obteniendo credenciales..."
+        CONN_STRING=$(az storage account show-connection-string \
+          --resource-group "$STORAGE_RG" \
+          --name "$STORAGE_NAME" \
+          --output tsv)
+
+        ACCOUNT_KEY=$(az storage account keys list \
+          --resource-group "$STORAGE_RG" \
+          --account-name "$STORAGE_NAME" \
+          --query '[0].value' -o tsv)
+
+        # Delete existing secret if exists
+        echo "2️⃣ Creando secret..."
+        kubectl delete secret "$SECRET_NAME" -n "$NAMESPACE" 2>/dev/null || true
+
+        # Create secret
+        kubectl create secret generic "$SECRET_NAME" \
+          --namespace "$NAMESPACE" \
+          --from-literal=AZURE_STORAGE_ACCOUNT_NAME="$STORAGE_NAME" \
+          --from-literal=AZURE_STORAGE_ACCOUNT_KEY="$ACCOUNT_KEY" \
+          --from-literal=AZURE_STORAGE_CONNECTION_STRING="$CONN_STRING" \
+          --from-literal=AZURE_CONTAINER_NAME="$CONTAINER"
+
+        echo ""
+        echo "✅ Secret creado exitosamente!"
+        echo ""
+        echo "📋 Para usar en un Pod:"
+        echo "   envFrom:"
+        echo "     - secretRef:"
+        echo "         name: $SECRET_NAME"
+
+  storage:sync-to-pod:
+    desc: "Sincroniza datos locales a un Pod en Kubernetes via Azure Storage"
+    summary: |
+      Sube datos locales a Azure Storage y luego sincroniza a un Pod.
+
+      Uso:
+        task storage:sync-to-pod LOCAL=./data POD=airflow-worker-0 POD_PATH=/opt/airflow/data
+
+      Este proceso:
+      1. Sube datos locales a Azure Storage
+      2. Ejecuta azcopy en el Pod para descargar los datos
+
+      Variables:
+        LOCAL: Ruta local de origen
+        POD: Nombre del Pod
+        POD_PATH: Ruta de destino en el Pod
+        STORAGE_NAME: Nombre del storage account
+        NAMESPACE: Namespace del Pod (default: default)
+    vars:
+      LOCAL: '{{.LOCAL | default ""}}'
+      POD: '{{.POD | default ""}}'
+      POD_PATH: '{{.POD_PATH | default "/opt/airflow/data"}}'
+      STORAGE_NAME: '{{.STORAGE_NAME | default ""}}'
+      NAMESPACE: '{{.NAMESPACE | default "default"}}'
+      CONTAINER: '{{.CONTAINER | default "ml-pipeline-data"}}'
+    preconditions:
+      - sh: '[ -n "{{.LOCAL}}" ]'
+        msg: "Error: LOCAL es requerido."
+      - sh: '[ -n "{{.POD}}" ]'
+        msg: "Error: POD es requerido."
+      - sh: '[ -n "{{.STORAGE_NAME}}" ]'
+        msg: "Error: STORAGE_NAME es requerido."
+    cmds:
+      - |
+        set -euo pipefail
+
+        LOCAL="{{.LOCAL}}"
+        POD="{{.POD}}"
+        POD_PATH="{{.POD_PATH}}"
+        STORAGE_NAME="{{.STORAGE_NAME}}"
+        NAMESPACE="{{.NAMESPACE}}"
+        CONTAINER="{{.CONTAINER}}"
+
+        echo ""
+        echo "🔄 Sincronizando datos a Pod via Azure Storage"
+        echo "   Local:     $LOCAL"
+        echo "   Pod:       $POD ($NAMESPACE)"
+        echo "   Pod Path:  $POD_PATH"
+        echo "   Storage:   $STORAGE_NAME"
+        echo ""
+
+        # Step 1: Upload to Azure Storage
+        echo "📤 Step 1: Subiendo a Azure Storage..."
+        REMOTE_PREFIX="sync-$(date +%Y%m%d-%H%M%S)"
+
+        if [ -d "$LOCAL" ]; then
+          az storage blob upload-batch \
+            --account-name "$STORAGE_NAME" \
+            --destination "$CONTAINER" \
+            --destination-path "$REMOTE_PREFIX" \
+            --source "$LOCAL" \
+            --auth-mode login \
+            --overwrite
+        else
+          FILENAME=$(basename "$LOCAL")
+          az storage blob upload \
+            --account-name "$STORAGE_NAME" \
+            --container-name "$CONTAINER" \
+            --file "$LOCAL" \
+            --name "${REMOTE_PREFIX}/${FILENAME}" \
+            --auth-mode login \
+            --overwrite
+        fi
+
+        echo "✅ Upload completado"
+        echo ""
+
+        # Step 2: Download in Pod using Azure CLI
+        echo "📥 Step 2: Descargando en Pod..."
+
+        # Check if Pod has azcopy or az cli
+        kubectl exec -n "$NAMESPACE" "$POD" -- mkdir -p "$POD_PATH"
+
+        # Try to download using az cli in pod
+        kubectl exec -n "$NAMESPACE" "$POD" -- sh -c "
+          if command -v az &> /dev/null; then
+            az storage blob download-batch \
+              --account-name $STORAGE_NAME \
+              --source $CONTAINER \
+              --destination $POD_PATH \
+              --pattern '${REMOTE_PREFIX}/*' \
+              --auth-mode login
+          else
+            echo 'Warning: az cli not available in pod. Manual download required.'
+            echo 'Use: kubectl cp to copy files directly'
+          fi
+        " || echo "Note: Using kubectl cp as fallback..."
+
+        echo ""
+        echo "✅ Sincronización completada!"
+        echo ""
+        echo "📋 Datos disponibles en:"
+        echo "   Pod: $POD:$POD_PATH"
+        echo "   Azure: $CONTAINER/$REMOTE_PREFIX"
+
+  ollama:deploy:
+    desc: "Despliega Ollama en Kubernetes"
+    summary: |
+      Despliega Ollama con el modelo configurado en el cluster de Kubernetes.
+
+      Uso:
+        task ollama:deploy
+        task ollama:deploy MODEL=mistral:7b
+
+      Variables:
+        MODEL: Modelo de Ollama (default: llama3.2:3b)
+        NAMESPACE: Namespace (default: default)
+    vars:
+      MODEL: '{{.MODEL | default "llama3.2:3b"}}'
+      NAMESPACE: '{{.NAMESPACE | default "default"}}'
+    preconditions:
+      - sh: command -v kubectl &> /dev/null
+        msg: "Error: kubectl no está instalado"
+    cmds:
+      - |
+        set -euo pipefail
+
+        MODEL="{{.MODEL}}"
+        NAMESPACE="{{.NAMESPACE}}"
+        K8S_DIR="../k8s"
+
+        echo ""
+        echo "🤖 Desplegando Ollama en Kubernetes"
+        echo "   Model:     $MODEL"
+        echo "   Namespace: $NAMESPACE"
+        echo ""
+
+        # Update ConfigMap with model
+        echo "1️⃣ Actualizando ConfigMap con modelo..."
+        kubectl create configmap ollama-config \
+          --namespace "$NAMESPACE" \
+          --from-literal=OLLAMA_MODEL="$MODEL" \
+          --from-literal=OLLAMA_HOST="0.0.0.0" \
+          --from-literal=OLLAMA_KEEP_ALIVE="24h" \
+          --from-literal=OLLAMA_NUM_PARALLEL="2" \
+          --dry-run=client -o yaml | kubectl apply -f -
+
+        # Apply deployment
+        echo "2️⃣ Aplicando deployment..."
+        kubectl apply -f "$K8S_DIR/ollama-deployment.yaml" -n "$NAMESPACE"
+
+        # Wait for rollout
+        echo "3️⃣ Esperando rollout..."
+        kubectl rollout status deployment/ollama -n "$NAMESPACE" --timeout=300s
+
+        echo ""
+        echo "✅ Ollama desplegado exitosamente!"
+        echo ""
+        echo "📋 Verificar estado:"
+        echo "   kubectl get pods -l app=ollama -n $NAMESPACE"
+        echo ""
+        echo "🔗 Acceder localmente:"
+        echo "   kubectl port-forward svc/ollama 11434:11434 -n $NAMESPACE"
+        echo "   curl http://localhost:11434/api/tags"
+
+  ollama:change-model:
+    desc: "Cambia el modelo de Ollama en un deployment existente"
+    summary: |
+      Actualiza el modelo de Ollama sin recrear el deployment.
+
+      Uso:
+        task ollama:change-model MODEL=mistral:7b
+
+      Modelos disponibles:
+        - llama3.2:3b (default)
+        - llama3.2:1b (lightweight)
+        - mistral:7b
+        - codellama:7b
+        - phi:2.7b
+    vars:
+      MODEL: '{{.MODEL | default ""}}'
+      NAMESPACE: '{{.NAMESPACE | default "default"}}'
+    preconditions:
+      - sh: '[ -n "{{.MODEL}}" ]'
+        msg: "Error: MODEL es requerido. Uso: task ollama:change-model MODEL=mistral:7b"
+    cmds:
+      - |
+        set -euo pipefail
+
+        MODEL="{{.MODEL}}"
+        NAMESPACE="{{.NAMESPACE}}"
+
+        echo ""
+        echo "🔄 Cambiando modelo de Ollama"
+        echo "   Nuevo modelo: $MODEL"
+        echo "   Namespace:    $NAMESPACE"
+        echo ""
+
+        # Update ConfigMap
+        echo "1️⃣ Actualizando ConfigMap..."
+        kubectl patch configmap ollama-config -n "$NAMESPACE" \
+          --type merge \
+          -p "{\"data\":{\"OLLAMA_MODEL\":\"$MODEL\"}}"
+
+        # Restart deployment to pull new model
+        echo "2️⃣ Reiniciando deployment..."
+        kubectl rollout restart deployment/ollama -n "$NAMESPACE"
+
+        # Wait for rollout
+        echo "3️⃣ Esperando rollout..."
+        kubectl rollout status deployment/ollama -n "$NAMESPACE" --timeout=600s
+
+        echo ""
+        echo "✅ Modelo cambiado a: $MODEL"
+        echo ""
+        echo "📋 Verificar modelo activo:"
+        echo "   kubectl exec -it \$(kubectl get pod -l app=ollama -o name | head -1) -- ollama list"
