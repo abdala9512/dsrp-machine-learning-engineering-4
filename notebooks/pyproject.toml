@@ -7,6 +7,8 @@ requires-python = ">=3.11"
 dependencies = [
     "aiohttp>=3.13.2",
     "apache-airflow>=3.0.0",
+    "azure-identity>=1.25.1",
+    "azure-storage-blob>=12.28.0",
     "dagshub>=0.6.4",
     "fastembed>=0.7.4",
     "hyperopt>=0.2.7",

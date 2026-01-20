@@ -200,3 +200,21 @@ kubernetesPodTemplate:
     limits:
       cpu: 1000m
       memory: 2Gi
+  # ML Pipeline dependencies - installed when worker pods start
+  extraEnvs:
+    - name: _PIP_ADDITIONAL_REQUIREMENTS
+      value: >-
+        aiohttp>=3.13.2
+        azure-identity>=1.25.1
+        azure-storage-blob>=12.28.0
+        dagshub>=0.6.4
+        fastembed>=0.7.4
+        hyperopt>=0.2.7
+        lightgbm>=4.6.0
+        loguru>=0.7.3
+        mlflow>=3.7.0
+        orjson>=3.11.4
+        polars>=1.35.2
+        python-dotenv>=1.2.1
+        qdrant-client[fastembed]>=1.16.1
+        sentence-transformers>=5.1.2
