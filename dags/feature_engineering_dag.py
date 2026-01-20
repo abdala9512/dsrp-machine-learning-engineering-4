@@ -14,17 +14,46 @@ from kubernetes.client import models as k8s
 
 # Pod override to install DAG-specific dependencies at runtime
 # This isolates dependencies per DAG instead of installing globally
+# Using init container to install dependencies before the main task runs
+# IMPORTANT: We install to /opt/dag-deps (not /home/airflow/.local) to avoid
+# overwriting the base Airflow installation
 FEATURE_ENG_POD_OVERRIDE = k8s.V1Pod(
     spec=k8s.V1PodSpec(
+        init_containers=[
+            k8s.V1Container(
+                name="install-deps",
+                image="apache/airflow:3.0.1",
+                command=["/bin/sh", "-c"],
+                args=["pip install --target=/opt/dag-deps 'polars>=1.35.2' 'azure-storage-blob'"],
+                volume_mounts=[
+                    k8s.V1VolumeMount(
+                        name="dag-deps",
+                        mount_path="/opt/dag-deps"
+                    )
+                ]
+            )
+        ],
         containers=[
             k8s.V1Container(
                 name="base",
                 env=[
                     k8s.V1EnvVar(
-                        name="_PIP_ADDITIONAL_REQUIREMENTS",
-                        value="polars>=1.35.2"
+                        name="PYTHONPATH",
+                        value="/opt/dag-deps"
+                    )
+                ],
+                volume_mounts=[
+                    k8s.V1VolumeMount(
+                        name="dag-deps",
+                        mount_path="/opt/dag-deps"
                     )
                 ]
+            )
+        ],
+        volumes=[
+            k8s.V1Volume(
+                name="dag-deps",
+                empty_dir=k8s.V1EmptyDirVolumeSource()
             )
         ]
     )
@@ -42,9 +71,9 @@ default_args = {
 def check_dependencies():
     """Check if the dependencies are installed."""
     try:
-        from azure.storage.blob import BlobServiceClient
-        from io import BytesIO
-        import polars as pl
+        from azure.storage.blob import BlobServiceClient  # noqa: F401
+        from io import BytesIO  # noqa: F401
+        import polars as pl  # noqa: F401
 
         print("Dependencies checked successfully")
 
