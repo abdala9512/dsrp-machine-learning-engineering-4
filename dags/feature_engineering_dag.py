@@ -10,9 +10,25 @@ from datetime import datetime, timedelta
 from airflow import DAG
 from airflow.operators.python import PythonOperator
 from airflow.sdk import Variable
+from kubernetes.client import models as k8s
 
-
-
+# Pod override to install DAG-specific dependencies at runtime
+# This isolates dependencies per DAG instead of installing globally
+FEATURE_ENG_POD_OVERRIDE = k8s.V1Pod(
+    spec=k8s.V1PodSpec(
+        containers=[
+            k8s.V1Container(
+                name="base",
+                env=[
+                    k8s.V1EnvVar(
+                        name="_PIP_ADDITIONAL_REQUIREMENTS",
+                        value="polars>=1.35.2"
+                    )
+                ]
+            )
+        ]
+    )
+)
 
 default_args = {
     "owner": "dsrp",
@@ -81,14 +97,16 @@ with DAG(
     tags=["example", "ml", "dsrp"],
 ) as dag:
 
-    check_dependencies = PythonOperator(
+    check_dependencies_task = PythonOperator(
         task_id="check_dependencies",
         python_callable=check_dependencies,
+        executor_config={"pod_override": FEATURE_ENG_POD_OVERRIDE},
     )
 
-    load_and_write_data = PythonOperator(
+    load_and_write_data_task = PythonOperator(
         task_id="load_and_write_data",
         python_callable=load_and_write_data,
+        executor_config={"pod_override": FEATURE_ENG_POD_OVERRIDE},
     )
 
-    check_dependencies >> load_and_write_data
+    check_dependencies_task >> load_and_write_data_task
