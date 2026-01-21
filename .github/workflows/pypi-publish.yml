@@ -47,5 +47,5 @@ jobs:
         with:
           # For trusted publishing (OIDC), no token needed
           # If using API token instead, uncomment below:
-          # password: ${{ secrets.PYPI_API_TOKEN }}
+          password: ${{ secrets.PYPI_API_TOKEN }}
           verbose: true
