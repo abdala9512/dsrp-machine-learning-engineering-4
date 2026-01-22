@@ -12,53 +12,62 @@ from airflow.operators.python import PythonOperator
 from airflow.sdk import Variable
 from kubernetes.client import models as k8s
 import polars as pl
+from typing import List
 
 # Pod override to install DAG-specific dependencies at runtime
 # This isolates dependencies per DAG instead of installing globally
 # Using init container to install dependencies before the main task runs
 # IMPORTANT: We install to /opt/dag-deps (not /home/airflow/.local) to avoid
 # overwriting the base Airflow installation
-FEATURE_ENG_POD_OVERRIDE = k8s.V1Pod(
-    spec=k8s.V1PodSpec(
-        init_containers=[
-            k8s.V1Container(
-                name="install-deps",
-                image="apache/airflow:3.0.1",
-                command=["/bin/sh", "-c"],
-                args=["pip install --target=/opt/dag-deps 'polars>=1.35.2' 'azure-storage-blob'"],
-                volume_mounts=[
-                    k8s.V1VolumeMount(
-                        name="dag-deps",
-                        mount_path="/opt/dag-deps"
-                    )
-                ]
-            )
-        ],
-        containers=[
-            k8s.V1Container(
-                name="base",
-                env=[
-                    k8s.V1EnvVar(
-                        name="PYTHONPATH",
-                        value="/opt/dag-deps"
-                    )
-                ],
-                volume_mounts=[
-                    k8s.V1VolumeMount(
-                        name="dag-deps",
-                        mount_path="/opt/dag-deps"
-                    )
-                ]
-            )
-        ],
-        volumes=[
-            k8s.V1Volume(
-                name="dag-deps",
-                empty_dir=k8s.V1EmptyDirVolumeSource()
-            )
-        ]
-    )
+
+resource_requirements = k8s.V1ResourceRequirements(
+    requests={"cpu": "200m", "memory": "512Mi", "ephemeral-storage": "2Gi"},
+    limits={"cpu": "1000m", "memory": "2Gi", "ephemeral-storage": "4Gi"},
 )
+
+def generate_pod_config(deps: List[str] = ["pip install --target=/opt/dag-deps 'polars>=1.35.2' 'azure-storage-blob'"]):
+    return  k8s.V1Pod(
+        spec=k8s.V1PodSpec(
+            init_containers=[
+                k8s.V1Container(
+                    name="install-deps",
+                    image="apache/airflow:3.0.1",
+                    command=["/bin/sh", "-c"],
+                    args=deps,
+                    volume_mounts=[
+                        k8s.V1VolumeMount(
+                            name="dag-deps",
+                            mount_path="/opt/dag-deps"
+                        )
+                    ],
+                    resources=resource_requirements
+                )
+            ],
+            containers=[
+                k8s.V1Container(
+                    name="base",
+                    env=[
+                        k8s.V1EnvVar(
+                            name="PYTHONPATH",
+                            value="/opt/dag-deps"
+                        )
+                    ],
+                    volume_mounts=[
+                        k8s.V1VolumeMount(
+                            name="dag-deps",
+                            mount_path="/opt/dag-deps"
+                        )
+                    ]
+                )
+            ],
+            volumes=[
+                k8s.V1Volume(
+                    name="dag-deps",
+                    empty_dir=k8s.V1EmptyDirVolumeSource()
+                )
+            ]
+        )
+    )
 
 default_args = {
     "owner": "dsrp",
@@ -150,7 +159,7 @@ def load_base_movies_data():
     )
 
     movies_base = pl.read_parquet(BytesIO(movies_base_blob_client.download_blob().readall()))
-    omdb_raw = [json.loads(line) for line in BytesIO(omdb_blob_client.download_blob().readall())]
+    omdb_raw = [json.loads(line) for line in  BytesIO(omdb_blob_client.download_blob().readall())]
 
     complementary_imdb_data = pl.DataFrame(
         [
@@ -190,6 +199,67 @@ def load_and_write_data():
     write_data_to_blob(data, "test")
     return "Data loaded and written to blob storage"
 
+def generate_embeddings():
+    from sentence_transformers import SentenceTransformer
+    from io import BytesIO
+    import polars as pl
+    import numpy as np
+
+    blob_service_client = get_blob_service_client()
+
+    complete_database_blob_client = blob_service_client.get_blob_client(
+        container="ml-pipeline-data",
+        blob="complete_imdb_database.parquet"
+    )
+    complete_database = pl.read_parquet(BytesIO(complete_database_blob_client.download_blob().readall()))
+    model = SentenceTransformer("sentence-transformers/all-MiniLM-L6-v2")
+
+    texts = (complete_database["title"] + ". " + complete_database["Plot"].fill_null("")).to_list()
+
+    print(f"Generando embeddings para {len(texts)} peliculas...")
+    embs = model.encode(texts, batch_size=64, show_progress_bar=True)
+    embs = np.asarray(embs, dtype="float32")
+
+    print(f"Forma de embeddings: {embs.shape}")
+
+    print("Modelo cargado: sentence-transformers/all-MiniLM-L6-v2")
+    print(f"Dimension de embeddings: {model.get_sentence_embedding_dimension()}")
+    
+
+    blob_service_client = get_blob_service_client()
+    blob_client = blob_service_client.get_blob_client(
+        container="ml-pipeline-data",
+        blob=f"airflow-prod/movie_embs.npy"
+    )
+    buffer = BytesIO()
+    np.save(buffer, embs)
+    blob_client.upload_blob(buffer.getvalue(), overwrite=True)
+
+
+def generate_new_features():
+    from io import BytesIO
+    import polars as pl
+
+    blob_service_client = get_blob_service_client()
+
+    complete_database_blob_client = blob_service_client.get_blob_client(
+        container="ml-pipeline-data",
+        blob="complete_imdb_database.parquet"
+    )
+    complete_database = pl.read_parquet(BytesIO(complete_database_blob_client.download_blob().readall()))
+
+    features = complete_database.with_columns([
+        pl.col("imdb_votes").log1p().alias("imdb_votes_log"),
+        (
+            (pl.col("year") - pl.col("year").mean()) / pl.col("year").std()
+        ).alias("year_norm"),
+        (2025 - pl.col("year")).alias("movie_age"),
+        pl.col("Plot").str.len_chars().alias("plot_length"),
+        pl.col("genres").str.contains("Action").cast(pl.Int8()).alias("genre_action"),
+    ])
+
+    write_data_to_blob(features, "featured_movies_database")
+    
 
 with DAG(
     dag_id="feature_engineering_dag",
@@ -204,19 +274,31 @@ with DAG(
     check_dependencies_task = PythonOperator(
         task_id="check_dependencies",
         python_callable=check_dependencies,
-        executor_config={"pod_override": FEATURE_ENG_POD_OVERRIDE},
+        executor_config={"pod_override": generate_pod_config()},
     )
 
     load_and_write_data_task = PythonOperator(
         task_id="load_and_write_data",
         python_callable=load_and_write_data,
-        executor_config={"pod_override": FEATURE_ENG_POD_OVERRIDE},
+        executor_config={"pod_override": generate_pod_config()},
     )
     load_base_movies_data_task = PythonOperator(
         task_id="load_base_movies_data",
         python_callable=load_base_movies_data,
-        executor_config={"pod_override": FEATURE_ENG_POD_OVERRIDE}
+        executor_config={"pod_override": generate_pod_config()}
+    )
+
+    generate_embeddings_task = PythonOperator(
+        task_id="generate_embeddings",
+        python_callable=generate_embeddings,
+        executor_config={"pod_override": generate_pod_config(deps= ["pip install --target=/opt/dag-deps 'polars>=1.35.2' 'azure-storage-blob' 'sentence-transformers>=5.1.2'"])}
+    )
+
+    generate_features_task =  PythonOperator(
+        task_id="generate_features",
+        python_callable=generate_new_features,
+        executor_config={"pod_override": generate_pod_config()}
     )
 
 
-    check_dependencies_task >> [load_and_write_data_task, load_base_movies_data_task]
+    check_dependencies_task >> [load_and_write_data_task, load_base_movies_data_task >>  generate_embeddings_task ] >> generate_features_task 
