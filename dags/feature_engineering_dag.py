@@ -11,6 +11,7 @@ from airflow import DAG
 from airflow.operators.python import PythonOperator
 from airflow.sdk import Variable
 from kubernetes.client import models as k8s
+import polars as pl
 
 # Pod override to install DAG-specific dependencies at runtime
 # This isolates dependencies per DAG instead of installing globally
@@ -68,11 +69,59 @@ default_args = {
     "retry_delay": timedelta(minutes=5),
 }
 
+# =============================================================================
+# Utility Functions
+# =============================================================================
+
+def get_blob_service_client():
+    """Get Azure Blob Storage client from environment."""
+    from azure.storage.blob import BlobServiceClient
+
+    credentials = Variable.get("azure_storage_credentials")
+    account_name = Variable.get("azure_storage_account_name")
+
+    return  BlobServiceClient(
+        account_url=account_name,
+        credential=credentials
+    )
+
+def load_data_from_blob():
+    """Load data from blob storage."""
+    from io import BytesIO
+    import polars as pl
+
+    blob_service_client = get_blob_service_client()
+    blob_client = blob_service_client.get_blob_client(
+        container="ml-pipeline-data",
+        blob="ltr_imdb_dataset.parquet"
+    )
+    return pl.read_parquet(BytesIO(blob_client.download_blob().readall()))
+
+
+def write_data_to_blob(data: pl.DataFrame):
+    """Write data to blob storage."""
+    from io import BytesIO
+    import polars as pl
+
+    blob_service_client = get_blob_service_client()
+    blob_client = blob_service_client.get_blob_client(
+        container="ml-pipeline-data",
+        blob="airflow-prod/test.parquet"
+    )
+    buffer = BytesIO()
+    data.write_parquet(buffer)
+    blob_client.upload_blob(buffer.getvalue(), overwrite=True)
+
+
+# =============================================================================
+# Task Functions
+# =============================================================================
+
 def check_dependencies():
     """Check if the dependencies are installed."""
     try:
         from azure.storage.blob import BlobServiceClient  # noqa: F401
-        from io import BytesIO  # noqa: F401
+         # noqa: F401
         import polars as pl  # noqa: F401
 
         print("Dependencies checked successfully")
@@ -83,37 +132,13 @@ def check_dependencies():
 
     return True
 
+
 def load_and_write_data():
     """Load and write data to a file."""
 
-    from azure.storage.blob import BlobServiceClient
-    from io import BytesIO
-    import polars as pl
-
-
-    credentials = Variable.get("azure_storage_credentials")
-    account_name = Variable.get("azure_storage_account_name")
-
-    blob_service_client = BlobServiceClient(
-        account_url=account_name,
-        credential=credentials
-    )
-    blob_client = blob_service_client.get_blob_client( 
-        container="ml-pipeline-data", 
-        blob="ltr_imdb_dataset.parquet"
-    )
-    blob_data = blob_client.download_blob().readall()
-
-    data_ = pl.read_parquet(BytesIO(blob_data))
-
-
-    buffer = BytesIO()
-    blob_client = blob_service_client.get_blob_client( 
-        container="ml-pipeline-data", 
-        blob="airflow-prod/test.parquet"
-    )
-    data_.write_parquet(buffer)
-    blob_client.upload_blob(buffer, overwrite=True)
+    data = load_data_from_blob()
+    write_data_to_blob(data)
+    return "Data loaded and written to blob storage"
 
 
 with DAG(
