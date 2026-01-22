@@ -98,7 +98,7 @@ def load_data_from_blob():
     return pl.read_parquet(BytesIO(blob_client.download_blob().readall()))
 
 
-def write_data_to_blob(data: pl.DataFrame):
+def write_data_to_blob(data: pl.DataFrame, blob_name: str):
     """Write data to blob storage."""
     from io import BytesIO
     import polars as pl
@@ -106,7 +106,7 @@ def write_data_to_blob(data: pl.DataFrame):
     blob_service_client = get_blob_service_client()
     blob_client = blob_service_client.get_blob_client(
         container="ml-pipeline-data",
-        blob="airflow-prod/test.parquet"
+        blob=f"airflow-prod/{blob_name}.parquet"
     )
     buffer = BytesIO()
     data.write_parquet(buffer)
@@ -133,11 +133,61 @@ def check_dependencies():
     return True
 
 
+def load_base_movies_data():
+    """Load base data from blob storage."""
+    from io import BytesIO
+    import polars as pl
+    import json
+
+    blob_service_client = get_blob_service_client()
+    movies_base_blob_client = blob_service_client.get_blob_client(
+        container="ml-pipeline-data",
+        blob="movies_base.parquet"
+    )
+    omdb_blob_client = blob_service_client.get_blob_client(
+        container="ml-pipeline-data",
+        blob="omdb_raw.jsonl"
+    )
+
+    movies_base = pl.read_parquet(BytesIO(movies_base_blob_client.download_blob().readall()))
+    omdb_raw = [json.loads(line) for line in BytesIO(omdb_blob_client.download_blob().readall())]
+
+    complementary_imdb_data = pl.DataFrame(
+        [
+            [
+                i["imdb_id"],
+                i["raw"].get("Runtime"),
+                i["raw"].get("Director"),
+                i["raw"].get("Actors"),
+                i["raw"].get("Plot"),
+                i["raw"].get("Country"),
+                i["raw"].get("Language"),
+            ] for i in omdb_raw
+        ],
+        schema={
+            "imdb_id": str,
+            "Runtime": str,
+            "Director": str,
+            "Actors": str,
+            "Plot": str,
+            "Country": str,
+            "Language": str
+        },
+        orient="row"
+    )
+
+    complete_db = movies_base.join(complementary_imdb_data, on="imdb_id")
+
+    write_data_to_blob(complete_db, "complete_imdb_database")
+
+    return "Base data loaded and written to blob storage. Location: airflow-prod/complete_imdb_database.parquet"
+
+
 def load_and_write_data():
     """Load and write data to a file."""
 
     data = load_data_from_blob()
-    write_data_to_blob(data)
+    write_data_to_blob(data, "test")
     return "Data loaded and written to blob storage"
 
 
@@ -162,5 +212,11 @@ with DAG(
         python_callable=load_and_write_data,
         executor_config={"pod_override": FEATURE_ENG_POD_OVERRIDE},
     )
+    load_base_movies_data_task = PythonOperator(
+        task_id="load_base_movies_data",
+        python_callable=load_base_movies_data,
+        executor_config={"pod_override": FEATURE_ENG_POD_OVERRIDE}
+    )
 
-    check_dependencies_task >> load_and_write_data_task
+
+    check_dependencies_task >> [load_and_write_data_task, load_base_movies_data_task]
