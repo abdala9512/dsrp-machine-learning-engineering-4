@@ -20,50 +20,36 @@ from typing import List
 # IMPORTANT: We install to /opt/dag-deps (not /home/airflow/.local) to avoid
 # overwriting the base Airflow installation
 
+# Standard resources for lightweight tasks (data loading, basic transformations)
 resource_requirements = k8s.V1ResourceRequirements(
-    requests={"cpu": "200m", "memory": "512Mi", "ephemeral-storage": "2Gi"},
-    limits={"cpu": "1000m", "memory": "2Gi", "ephemeral-storage": "4Gi"},
+    requests={"cpu": "500m", "memory": "1Gi", "ephemeral-storage": "2Gi"},
+    limits={"cpu": "1000m", "memory": "4Gi", "ephemeral-storage": "6Gi"},
 )
 
-def generate_pod_config(deps: List[str] = ["pip install --target=/opt/dag-deps 'polars>=1.35.2' 'azure-storage-blob'"]):
-    return  k8s.V1Pod(
+# Heavy ML resources for tasks requiring sentence-transformers, embeddings, etc.
+ml_resource_requirements = k8s.V1ResourceRequirements(
+    requests={"cpu": "1000m", "memory": "4Gi", "ephemeral-storage": "4Gi"},
+    limits={"cpu": "2000m", "memory": "8Gi", "ephemeral-storage": "10Gi"},
+)
+
+def generate_pod_config(
+    pip_packages: str = "polars>=1.35.2 azure-storage-blob loguru>=0.7.3",
+    resources: k8s.V1ResourceRequirements = None
+):
+    """Generate Kubernetes pod configuration with pip packages via _PIP_ADDITIONAL_REQUIREMENTS."""
+    pod_resources = resources if resources is not None else resource_requirements
+    return k8s.V1Pod(
         spec=k8s.V1PodSpec(
-            init_containers=[
-                k8s.V1Container(
-                    name="install-deps",
-                    image="apache/airflow:3.0.1",
-                    command=["/bin/sh", "-c"],
-                    args=deps,
-                    volume_mounts=[
-                        k8s.V1VolumeMount(
-                            name="dag-deps",
-                            mount_path="/opt/dag-deps"
-                        )
-                    ],
-                    resources=resource_requirements
-                )
-            ],
             containers=[
                 k8s.V1Container(
                     name="base",
                     env=[
                         k8s.V1EnvVar(
-                            name="PYTHONPATH",
-                            value="/opt/dag-deps"
+                            name="_PIP_ADDITIONAL_REQUIREMENTS",
+                            value=pip_packages
                         )
                     ],
-                    volume_mounts=[
-                        k8s.V1VolumeMount(
-                            name="dag-deps",
-                            mount_path="/opt/dag-deps"
-                        )
-                    ]
-                )
-            ],
-            volumes=[
-                k8s.V1Volume(
-                    name="dag-deps",
-                    empty_dir=k8s.V1EmptyDirVolumeSource()
+                    resources=pod_resources
                 )
             ]
         )
@@ -291,7 +277,12 @@ with DAG(
     generate_embeddings_task = PythonOperator(
         task_id="generate_embeddings",
         python_callable=generate_embeddings,
-        executor_config={"pod_override": generate_pod_config(deps= ["pip install --target=/opt/dag-deps 'polars>=1.35.2' 'azure-storage-blob' 'sentence-transformers>=5.1.2'"])}
+        executor_config={
+            "pod_override": generate_pod_config(
+                pip_packages="polars>=1.35.2 azure-storage-blob sentence-transformers>=5.1.2 loguru>=0.7.3",
+                resources=ml_resource_requirements
+            )
+        }
     )
 
     generate_features_task =  PythonOperator(
