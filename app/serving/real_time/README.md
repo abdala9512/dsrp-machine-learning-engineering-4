@@ -199,7 +199,7 @@ The API exposes the following metrics at `/metrics`:
 
 | Metric | Type | Labels | Description |
 |--------|------|--------|-------------|
-| `movie_api_requests_total` | Counter | endpoint, status | Total API requests |
+| ` c` | Counter | endpoint, status | Total API requests |
 | `movie_api_request_latency_seconds` | Histogram | endpoint | Request latency |
 
 ### Pipeline Metrics

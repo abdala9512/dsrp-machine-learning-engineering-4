@@ -296,7 +296,7 @@ with DAG(
     generate_embeddings_task = PythonOperator(
         task_id="generate_embeddings",
         python_callable=generate_embeddings,
-        executor_config={"pod_override": generate_pod_config(resources=ml_resource_requirements)}
+       # executor_config={"pod_override": generate_pod_config(resources=ml_resource_requirements)}
     )
 
     generate_features_task = PythonOperator(

@@ -8,17 +8,14 @@
 # Executor: KubernetesExecutor para ejecutar DAGs como pods individuales
 executor: "KubernetesExecutor"
 
-# Imagen de Airflow
+# Imagen de Airflow - Custom ML image with pre-installed dependencies
+# Built via: .github/workflows/airflow-ml-docker.yml
+# Includes: polars, sentence-transformers, qdrant-client, lightgbm, mlflow, dagshub, etc.
 images:
   airflow:
-    repository: apache/airflow
-    tag: "3.0.1"
+    repository: ghcr.io/abdala9512/airflow-ml
+    tag: "3.0.1-ml"
     pullPolicy: IfNotPresent
-
-# ML Pipeline dependencies - lightweight packages only (heavy deps like torch/sentence-transformers need a custom image)
-env:
-  - name: _PIP_ADDITIONAL_REQUIREMENTS
-    value: "polars>=1.35.2 loguru>=0.7.3"
 
 # API Server (Web UI) - Airflow 3.0 renamed webserver to api-server
 apiServer:
@@ -197,11 +194,14 @@ ingress:
 
 # Resources para pods de workers (KubernetesExecutor)
 # Estos valores se usan cuando se crean pods para ejecutar tasks
+# Increased for ML workloads (sentence-transformers, embeddings, etc.)
 kubernetesPodTemplate:
   resources:
     requests:
-      cpu: 200m
-      memory: 512Mi
-    limits:
-      cpu: 1000m
+      cpu: 500m
       memory: 2Gi
+      ephemeral-storage: "4Gi"
+    limits:
+      cpu: 2000m
+      memory: 8Gi
+      ephemeral-storage: "10Gi"

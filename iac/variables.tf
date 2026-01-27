@@ -28,7 +28,7 @@ variable "node_count" {
 variable "vm_size" {
   description = "Tamaño de las máquinas virtuales de los nodos"
   type        = string
-  default     = "Standard_B2s"
+  default     = "Standard_D4s_v3"  # 4 vCPU, 16GB RAM - required for ML workloads (sentence-transformers, etc.)
 }
 
 variable "kubernetes_version" {

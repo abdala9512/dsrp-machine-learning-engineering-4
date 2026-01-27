@@ -54,7 +54,7 @@ resource "azurerm_kubernetes_cluster" "main" {
     name            = "systempool"
     vm_size         = var.vm_size
     vnet_subnet_id  = azurerm_subnet.aks.id
-    os_disk_size_gb = 30
+    os_disk_size_gb = 100  # Increased for ML Docker images with heavy dependencies
     type            = "VirtualMachineScaleSets"
     node_count      = 1
     max_pods        = 30
@@ -110,7 +110,7 @@ resource "azurerm_kubernetes_cluster_node_pool" "workload" {
   kubernetes_cluster_id = azurerm_kubernetes_cluster.main.id
   vm_size               = var.vm_size
   vnet_subnet_id        = azurerm_subnet.aks.id
-  os_disk_size_gb       = 30
+  os_disk_size_gb       = 100  # Increased for ML Docker images with heavy dependencies
   max_pods              = 30
   priority              = "Regular"
   node_count            = var.node_count

@@ -12,6 +12,7 @@ import logging
 import time
 import os
 import litserve as ls
+import shutil
 import mlflow
 from fastapi import Response
 from prometheus_client import multiprocess, generate_latest, CONTENT_TYPE_LATEST, CollectorRegistry
