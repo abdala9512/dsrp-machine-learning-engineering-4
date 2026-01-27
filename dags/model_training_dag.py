@@ -7,10 +7,11 @@ performs hyperparameter optimization, and registers the model to MLflow.
 Prerequisites:
 - ltr_synthetic_dataset.parquet in Azure Blob Storage
 - MLflow tracking server configured (DagsHub)
+
+Note: Uses custom airflow-ml image with pre-installed dependencies.
 """
 
 from datetime import datetime, timedelta
-from typing import List
 
 from airflow import DAG
 from airflow.operators.python import PythonOperator
@@ -31,26 +32,14 @@ ml_training_requirements = k8s.V1ResourceRequirements(
 )
 
 
-def generate_pod_config(
-    pip_packages: str = None,
-    resources: k8s.V1ResourceRequirements = None
-):
-    """Generate Kubernetes pod configuration with pip packages via _PIP_ADDITIONAL_REQUIREMENTS."""
-    if pip_packages is None:
-        pip_packages = "dsrp-ml-utils[azure] polars>=1.35.2 loguru>=0.7.3"
-
+def generate_pod_config(resources: k8s.V1ResourceRequirements = None):
+    """Generate Kubernetes pod configuration with resource limits."""
     pod_resources = resources if resources is not None else resource_requirements
     return k8s.V1Pod(
         spec=k8s.V1PodSpec(
             containers=[
                 k8s.V1Container(
                     name="base",
-                    env=[
-                        k8s.V1EnvVar(
-                            name="_PIP_ADDITIONAL_REQUIREMENTS",
-                            value=pip_packages
-                        )
-                    ],
                     resources=pod_resources
                 )
             ]
@@ -148,6 +137,7 @@ def ndcg_at_k(true_rels, pred_scores, k=10):
 def train_ltr_model():
     """Train LightGBM ranker with hyperparameter optimization and register to MLflow."""
     import json
+    import os
     import numpy as np
     import polars as pl
     import lightgbm as lgb
@@ -160,7 +150,6 @@ def train_ltr_model():
     logger.info("Initializing MLflow tracking...")
 
     # Set DagsHub token from Airflow Variables
-    import os
     dagshub_token = Variable.get("dagshub_token")
     os.environ["DAGSHUB_USER_TOKEN"] = dagshub_token
 
@@ -381,6 +370,7 @@ def train_ltr_model():
 
 def promote_champion_model():
     """Promote the best model to champion alias based on metrics."""
+    import os
     import mlflow
     import dagshub
     from loguru import logger
@@ -388,7 +378,6 @@ def promote_champion_model():
     logger.info("Checking for champion promotion...")
 
     # Set DagsHub token from Airflow Variables
-    import os
     dagshub_token = Variable.get("dagshub_token")
     os.environ["DAGSHUB_USER_TOKEN"] = dagshub_token
 
@@ -479,22 +468,13 @@ with DAG(
     train_model_task = PythonOperator(
         task_id="train_ltr_model",
         python_callable=train_ltr_model,
-        executor_config={
-            "pod_override": generate_pod_config(
-                pip_packages="dsrp-ml-utils[azure] polars>=1.35.2 lightgbm>=4.0.0 mlflow>=2.0.0 dagshub hyperopt scikit-learn loguru>=0.7.3",
-                resources=ml_training_requirements
-            )
-        },
+        executor_config={"pod_override": generate_pod_config(resources=ml_training_requirements)},
     )
 
     promote_model_task = PythonOperator(
         task_id="promote_champion_model",
         python_callable=promote_champion_model,
-        executor_config={
-            "pod_override": generate_pod_config(
-                pip_packages="mlflow>=2.0.0 dagshub loguru>=0.7.3"
-            )
-        },
+        executor_config={"pod_override": generate_pod_config()},
     )
 
     train_model_task >> promote_model_task

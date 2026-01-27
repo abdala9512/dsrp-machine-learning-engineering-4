@@ -8,10 +8,11 @@ Prerequisites:
 - complete_imdb_database.parquet in Azure Blob Storage
 - movie_embs.npy embeddings in Azure Blob Storage
 - GROQ_API_KEY in Airflow Variables
+
+Note: Uses custom airflow-ml image with pre-installed dependencies.
 """
 
 from datetime import datetime, timedelta
-from typing import List
 
 from airflow import DAG
 from airflow.operators.python import PythonOperator
@@ -32,26 +33,14 @@ ml_resource_requirements = k8s.V1ResourceRequirements(
 )
 
 
-def generate_pod_config(
-    pip_packages: str = None,
-    resources: k8s.V1ResourceRequirements = None
-):
-    """Generate Kubernetes pod configuration with pip packages via _PIP_ADDITIONAL_REQUIREMENTS."""
-    if pip_packages is None:
-        pip_packages = "dsrp-ml-utils[azure] polars>=1.35.2 loguru>=0.7.3"
-
+def generate_pod_config(resources: k8s.V1ResourceRequirements = None):
+    """Generate Kubernetes pod configuration with resource limits."""
     pod_resources = resources if resources is not None else resource_requirements
     return k8s.V1Pod(
         spec=k8s.V1PodSpec(
             containers=[
                 k8s.V1Container(
                     name="base",
-                    env=[
-                        k8s.V1EnvVar(
-                            name="_PIP_ADDITIONAL_REQUIREMENTS",
-                            value=pip_packages
-                        )
-                    ],
                     resources=pod_resources
                 )
             ]
@@ -111,7 +100,6 @@ def read_parquet_from_blob(container: str, blob_name: str):
 def write_parquet_to_blob(data, container: str, blob_name: str):
     """Write parquet file to Azure Blob Storage."""
     from io import BytesIO
-    import polars as pl
 
     blob_service_client = get_blob_service_client()
     blob_client = blob_service_client.get_blob_client(
@@ -426,22 +414,13 @@ with DAG(
     generate_queries_task = PythonOperator(
         task_id="generate_queries_with_groq",
         python_callable=generate_queries_with_groq,
-        executor_config={
-            "pod_override": generate_pod_config(
-                pip_packages="dsrp-ml-utils[azure] polars>=1.35.2 requests loguru>=0.7.3"
-            )
-        },
+        executor_config={"pod_override": generate_pod_config()},
     )
 
     retrieve_and_score_task = PythonOperator(
         task_id="retrieve_candidates_and_score",
         python_callable=retrieve_candidates_and_score,
-        executor_config={
-            "pod_override": generate_pod_config(
-                pip_packages="dsrp-ml-utils[azure] polars>=1.35.2 sentence-transformers>=5.1.2 loguru>=0.7.3",
-                resources=ml_resource_requirements
-            )
-        },
+        executor_config={"pod_override": generate_pod_config(resources=ml_resource_requirements)},
     )
 
     generate_queries_task >> retrieve_and_score_task

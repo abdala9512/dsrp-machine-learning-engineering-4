@@ -7,10 +7,11 @@ It creates or updates the collection and indexes all movies with their embedding
 Prerequisites:
 - complete_imdb_database.parquet in Azure Blob Storage
 - Qdrant instance running and accessible
+
+Note: Uses custom airflow-ml image with pre-installed dependencies.
 """
 
 from datetime import datetime, timedelta
-from typing import List
 
 from airflow import DAG
 from airflow.operators.python import PythonOperator
@@ -31,26 +32,14 @@ ml_resource_requirements = k8s.V1ResourceRequirements(
 )
 
 
-def generate_pod_config(
-    pip_packages: str = None,
-    resources: k8s.V1ResourceRequirements = None
-):
-    """Generate Kubernetes pod configuration with pip packages via _PIP_ADDITIONAL_REQUIREMENTS."""
-    if pip_packages is None:
-        pip_packages = "dsrp-ml-utils[azure] polars>=1.35.2 loguru>=0.7.3"
-
+def generate_pod_config(resources: k8s.V1ResourceRequirements = None):
+    """Generate Kubernetes pod configuration with resource limits."""
     pod_resources = resources if resources is not None else resource_requirements
     return k8s.V1Pod(
         spec=k8s.V1PodSpec(
             containers=[
                 k8s.V1Container(
                     name="base",
-                    env=[
-                        k8s.V1EnvVar(
-                            name="_PIP_ADDITIONAL_REQUIREMENTS",
-                            value=pip_packages
-                        )
-                    ],
                     resources=pod_resources
                 )
             ]
@@ -351,33 +340,19 @@ with DAG(
     create_collection_task = PythonOperator(
         task_id="create_qdrant_collection",
         python_callable=create_qdrant_collection,
-        executor_config={
-            "pod_override": generate_pod_config(
-                pip_packages="qdrant-client>=1.9.0 loguru>=0.7.3"
-            )
-        },
+        executor_config={"pod_override": generate_pod_config()},
     )
 
     index_movies_task = PythonOperator(
         task_id="index_movies_to_qdrant",
         python_callable=index_movies_to_qdrant,
-        executor_config={
-            "pod_override": generate_pod_config(
-                pip_packages="dsrp-ml-utils[azure] polars>=1.35.2 loguru>=0.7.3 qdrant-client>=1.9.0 sentence-transformers>=5.1.2",
-                resources=ml_resource_requirements
-            )
-        },
+        executor_config={"pod_override": generate_pod_config(resources=ml_resource_requirements)},
     )
 
     verify_index_task = PythonOperator(
         task_id="verify_qdrant_index",
         python_callable=verify_qdrant_index,
-        executor_config={
-            "pod_override": generate_pod_config(
-                pip_packages="qdrant-client>=1.9.0 sentence-transformers>=5.1.2 loguru>=0.7.3",
-                resources=ml_resource_requirements
-            )
-        },
+        executor_config={"pod_override": generate_pod_config(resources=ml_resource_requirements)},
     )
 
     create_collection_task >> index_movies_task >> verify_index_task
