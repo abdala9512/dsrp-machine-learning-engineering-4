@@ -1,5 +1,30 @@
 import { ImdbSearchResponse, ImdbTitle } from "./types";
 
+/**
+ * API Mode Configuration
+ *
+ * Set VITE_API_MODE to control how the frontend fetches movie data:
+ * - "backend": Use the backend API which orchestrates ML service + IMDB API
+ * - "imdb": Use IMDB API directly (default, original behavior)
+ *
+ * When using "backend" mode, set VITE_BACKEND_URL to the backend API URL.
+ */
+
+type ApiMode = "backend" | "imdb";
+
+const getApiMode = (): ApiMode => {
+  const mode = import.meta.env.VITE_API_MODE as string | undefined;
+  if (mode === "backend") return "backend";
+  return "imdb";
+};
+
+const resolveBackendUrl = (): string => {
+  const envUrl = import.meta.env.VITE_BACKEND_URL as string | undefined;
+  const defaultUrl = "http://localhost:8080";
+  const base = envUrl?.trim() || defaultUrl;
+  return base.endsWith("/") ? base.slice(0, -1) : base;
+};
+
 const resolveApiBaseUrl = (): string => {
   const envUrl = import.meta.env.VITE_IMDB_API_BASE_URL as string | undefined;
   const defaultUrl = "https://api.imdbapi.dev";
@@ -256,12 +281,78 @@ const normalizeList = (rawList: ImdbTitle[], limit: number): ImdbTitle[] => {
     .slice(0, limit);
 };
 
-export async function searchImdbTitles(query: string, limit = 20): Promise<ImdbTitle[]> {
+/**
+ * Backend API response type
+ */
+interface BackendSearchResponse {
+  query: string;
+  results: Array<{
+    id: string;
+    title: string;
+    url?: string | null;
+    year?: number | null;
+    image?: string | null;
+    rating?: number | null;
+    ratingVotes?: number | null;
+    type?: string | null;
+    ltr_score?: number | null;
+    retrieval_score?: number | null;
+    sim_embedding?: number | null;
+  }>;
+  count: number;
+  source: "ml" | "imdb";
+}
+
+/**
+ * Search using the backend API (ML service + IMDB API)
+ */
+async function searchViaBackend(query: string, limit = 20): Promise<ImdbTitle[]> {
+  const backendUrl = resolveBackendUrl();
+
+  const response = await fetch(`${backendUrl}/search`, {
+    method: "POST",
+    headers: {
+      "Content-Type": "application/json",
+      Accept: "application/json",
+    },
+    body: JSON.stringify({
+      query,
+      limit,
+      use_ml: true,
+    }),
+  });
+
+  if (!response.ok) {
+    const errorText = await response.text();
+    throw new Error(errorText || `Backend API error (${response.status})`);
+  }
+
+  const data = (await response.json()) as BackendSearchResponse;
+
+  // Convert backend response to ImdbTitle format
+  // Note: Backend already returns data in the correct format,
+  // but we preserve the order from ML ranking (no re-sorting)
+  return data.results.map((item) => ({
+    id: item.id,
+    title: item.title,
+    url: item.url,
+    year: item.year,
+    image: item.image,
+    rating: item.rating,
+    ratingVotes: item.ratingVotes,
+    type: item.type,
+  }));
+}
+
+/**
+ * Search IMDB directly (original implementation)
+ */
+async function searchImdbDirect(query: string, limit = 20): Promise<ImdbTitle[]> {
   const baseUrl = resolveApiBaseUrl();
   const endpoints = [
-    { path: "/search/titles", params: { query, limit: limit.toString() } },
-    { path: "/search/titles", params: { q: query, limit: limit.toString() } },
-    { path: "/search", params: { q: query, limit: limit.toString() } },
+    { path: "/search/titles", params: [["query", query], ["limit", limit.toString()]] as [string, string][] },
+    { path: "/search/titles", params: [["q", query], ["limit", limit.toString()]] as [string, string][] },
+    { path: "/search", params: [["q", query], ["limit", limit.toString()]] as [string, string][] },
   ];
 
   let lastError: Error | null = null;
@@ -291,4 +382,35 @@ export async function searchImdbTitles(query: string, limit = 20): Promise<ImdbT
   }
 
   throw new Error("IMDb API did not return any results.");
+}
+
+/**
+ * Main search function - routes to backend or IMDB based on configuration
+ *
+ * Configuration via environment variables:
+ * - VITE_API_MODE: "backend" | "imdb" (default: "imdb")
+ * - VITE_BACKEND_URL: Backend API URL (default: "http://localhost:8080")
+ * - VITE_IMDB_API_BASE_URL: IMDB API URL (default: "https://api.imdbapi.dev")
+ */
+export async function searchImdbTitles(query: string, limit = 20): Promise<ImdbTitle[]> {
+  const mode = getApiMode();
+
+  if (mode === "backend") {
+    try {
+      return await searchViaBackend(query, limit);
+    } catch (error) {
+      console.warn("Backend search failed, falling back to direct IMDB:", error);
+      // Fallback to direct IMDB search if backend fails
+      return await searchImdbDirect(query, limit);
+    }
+  }
+
+  return await searchImdbDirect(query, limit);
+}
+
+/**
+ * Get the current API mode for display purposes
+ */
+export function getCurrentApiMode(): ApiMode {
+  return getApiMode();
 }

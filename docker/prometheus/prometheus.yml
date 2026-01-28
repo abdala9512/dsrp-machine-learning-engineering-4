@@ -1,0 +1,30 @@
+global:
+  scrape_interval: 15s
+  evaluation_interval: 15s
+
+scrape_configs:
+  # Scrape Prometheus itself
+  - job_name: "prometheus"
+    static_configs:
+      - targets: ["localhost:9090"]
+
+  # Scrape Backend API
+  - job_name: "backend"
+    static_configs:
+      - targets: ["backend:8080"]
+    metrics_path: "/metrics"
+    scrape_interval: 5s
+
+  # Scrape ML Service
+  - job_name: "ml-service"
+    static_configs:
+      - targets: ["ml-service:8000"]
+    metrics_path: "/metrics"
+    scrape_interval: 5s
+
+  # Scrape Qdrant (if available)
+  - job_name: "qdrant"
+    static_configs:
+      - targets: ["qdrant:6333"]
+    metrics_path: "/metrics"
+    scrape_interval: 30s

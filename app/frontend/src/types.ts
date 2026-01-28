@@ -1,6 +1,7 @@
 export type ImdbTitle = {
   id?: string;
   title?: string;
+  name?: string;
   url?: string | null;
   year?: number | null;
   image?: string | null;

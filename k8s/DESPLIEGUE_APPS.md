@@ -343,6 +343,98 @@ kubectl delete namespace airflow
 
 ---
 
+## Despliegue del Backend API
+
+El Backend API es una capa de orquestacion que conecta el Frontend con el ML Service y la API de IMDB.
+
+### Arquitectura
+
+```
+Frontend → Backend → ML Service → Qdrant
+              ↓
+          IMDB API
+```
+
+### Flujo de datos
+
+1. Frontend envia query de busqueda al Backend
+2. Backend llama al ML Service para obtener IDs de peliculas recomendadas
+3. Backend llama a IMDB API para obtener detalles de cada pelicula
+4. Backend retorna resultados enriquecidos al Frontend
+
+### Modos de operacion
+
+- **ML Mode** (default): Usa el ML Service para recomendaciones inteligentes
+- **Direct Mode**: Busca en IMDB directamente (fallback)
+
+### Instalacion
+
+1) Aplica el manifiesto:
+```bash
+kubectl apply -f k8s/backend.yaml
+```
+
+2) Verifica el estado:
+```bash
+kubectl get pods -l app=backend
+kubectl logs -l app=backend -f
+```
+
+3) Obtener la IP publica:
+```bash
+kubectl get svc backend
+```
+
+4) Asignar DNS label:
+```bash
+cd iac
+task dns:set-label SERVICE=backend LABEL=dsrp-backend
+```
+
+### Endpoints
+
+| Endpoint | Metodo | Descripcion |
+|----------|--------|-------------|
+| `/search` | POST | Busqueda de peliculas |
+| `/search` | GET | Busqueda (query params) |
+| `/movie/{id}` | GET | Detalles de una pelicula |
+| `/health` | GET | Health check |
+| `/metrics` | GET | Metricas Prometheus |
+| `/docs` | GET | Documentacion OpenAPI |
+
+### Ejemplo de uso
+
+```bash
+# Busqueda con ML
+curl -X POST http://dsrp-backend.<region>.cloudapp.azure.com/search \
+  -H "Content-Type: application/json" \
+  -d '{"query": "action movies like the dark knight", "limit": 10, "use_ml": true}'
+
+# Busqueda directa IMDB
+curl -X POST http://dsrp-backend.<region>.cloudapp.azure.com/search \
+  -H "Content-Type: application/json" \
+  -d '{"query": "batman", "limit": 10, "use_ml": false}'
+```
+
+### Configuracion
+
+Variables de entorno en el ConfigMap:
+
+| Variable | Default | Descripcion |
+|----------|---------|-------------|
+| `ML_SERVICE_URL` | `http://model-serving:80` | URL del ML Service |
+| `IMDB_API_URL` | `https://api.imdbapi.dev` | URL de IMDB API |
+| `ENABLE_ML_SERVICE` | `true` | Habilitar ML Service |
+| `ML_SERVICE_TIMEOUT` | `30.0` | Timeout ML Service (segundos) |
+| `IMDB_API_TIMEOUT` | `10.0` | Timeout IMDB API (segundos) |
+
+### Recursos
+
+- CPU: 100m (request) / 500m (limit)
+- Memoria: 128Mi (request) / 512Mi (limit)
+
+---
+
 ## Despliegue del Model Serving API
 
 API de recomendacion de peliculas usando LightGBM LTR, Qdrant y Sentence Transformers.

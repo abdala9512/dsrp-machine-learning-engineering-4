@@ -10,6 +10,8 @@ resources:
   # Core infrastructure
   - qdrant.yaml
   - azure-storage-secret.yaml
+  # Backend API
+  - backend.yaml
   # Model serving
   - model-serving.yaml
   # Monitoring
@@ -25,6 +27,8 @@ commonLabels:
 
 # Image customization (can override in overlays)
 images:
+  - name: ghcr.io/abdala9512/dsrp-backend
+    newTag: latest
   - name: ghcr.io/abdala9512/dsrp-model-serving
     newTag: latest
   - name: prom/prometheus
