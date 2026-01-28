@@ -1,0 +1,397 @@
+# Grafana Deployment for ML Pipeline Visualization
+---
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: grafana-datasources
+  labels:
+    app: grafana
+data:
+  prometheus.yml: |
+    apiVersion: 1
+    datasources:
+      - name: Prometheus
+        type: prometheus
+        access: proxy
+        url: http://prometheus:80
+        uid: prometheus
+        isDefault: true
+        editable: false
+---
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: grafana-dashboard-provider
+  labels:
+    app: grafana
+data:
+  dashboards.yml: |
+    apiVersion: 1
+    providers:
+      - name: "Movie API Dashboards"
+        orgId: 1
+        folder: "ML Pipeline"
+        folderUid: "ml-pipeline"
+        type: file
+        disableDeletion: false
+        editable: true
+        options:
+          path: /etc/grafana/provisioning/dashboards
+---
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: grafana-dashboards
+  labels:
+    app: grafana
+data:
+  movie-api.json: |
+    {
+      "annotations": {"list": []},
+      "editable": true,
+      "fiscalYearStartMonth": 0,
+      "graphTooltip": 0,
+      "id": null,
+      "links": [],
+      "liveNow": false,
+      "panels": [
+        {
+          "datasource": {"type": "prometheus", "uid": "prometheus"},
+          "fieldConfig": {
+            "defaults": {
+              "color": {"mode": "palette-classic"},
+              "mappings": [],
+              "thresholds": {"mode": "absolute", "steps": [{"color": "green", "value": null}, {"color": "red", "value": 80}]},
+              "unit": "short"
+            },
+            "overrides": []
+          },
+          "gridPos": {"h": 4, "w": 6, "x": 0, "y": 0},
+          "id": 1,
+          "options": {
+            "colorMode": "value",
+            "graphMode": "area",
+            "justifyMode": "auto",
+            "orientation": "auto",
+            "reduceOptions": {"calcs": ["lastNotNull"], "fields": "", "values": false},
+            "textMode": "auto"
+          },
+          "pluginVersion": "10.4.0",
+          "targets": [{"expr": "sum(increase(movie_api_requests_total[5m]))", "legendFormat": "Requests", "refId": "A"}],
+          "title": "Requests (5m)",
+          "type": "stat"
+        },
+        {
+          "datasource": {"type": "prometheus", "uid": "prometheus"},
+          "fieldConfig": {
+            "defaults": {
+              "color": {"mode": "thresholds"},
+              "mappings": [],
+              "thresholds": {"mode": "absolute", "steps": [{"color": "green", "value": null}, {"color": "yellow", "value": 0.5}, {"color": "red", "value": 1}]},
+              "unit": "s"
+            },
+            "overrides": []
+          },
+          "gridPos": {"h": 4, "w": 6, "x": 6, "y": 0},
+          "id": 2,
+          "options": {
+            "colorMode": "value",
+            "graphMode": "area",
+            "justifyMode": "auto",
+            "orientation": "auto",
+            "reduceOptions": {"calcs": ["lastNotNull"], "fields": "", "values": false},
+            "textMode": "auto"
+          },
+          "pluginVersion": "10.4.0",
+          "targets": [{"expr": "histogram_quantile(0.95, sum(rate(movie_api_request_latency_seconds_bucket[5m])) by (le))", "legendFormat": "P95", "refId": "A"}],
+          "title": "P95 Latency",
+          "type": "stat"
+        },
+        {
+          "datasource": {"type": "prometheus", "uid": "prometheus"},
+          "fieldConfig": {
+            "defaults": {
+              "color": {"mode": "thresholds"},
+              "mappings": [
+                {"options": {"0": {"color": "red", "index": 0, "text": "DOWN"}}, "type": "value"},
+                {"options": {"1": {"color": "green", "index": 1, "text": "UP"}}, "type": "value"}
+              ],
+              "thresholds": {"mode": "absolute", "steps": [{"color": "red", "value": null}, {"color": "green", "value": 1}]}
+            },
+            "overrides": []
+          },
+          "gridPos": {"h": 4, "w": 4, "x": 12, "y": 0},
+          "id": 3,
+          "options": {
+            "colorMode": "background",
+            "graphMode": "none",
+            "justifyMode": "auto",
+            "orientation": "auto",
+            "reduceOptions": {"calcs": ["lastNotNull"], "fields": "", "values": false},
+            "textMode": "auto"
+          },
+          "pluginVersion": "10.4.0",
+          "targets": [{"expr": "movie_api_qdrant_available", "legendFormat": "Qdrant", "refId": "A"}],
+          "title": "Qdrant Status",
+          "type": "stat"
+        },
+        {
+          "datasource": {"type": "prometheus", "uid": "prometheus"},
+          "fieldConfig": {
+            "defaults": {
+              "color": {"mode": "thresholds"},
+              "mappings": [
+                {"options": {"0": {"color": "red", "index": 0, "text": "NOT LOADED"}}, "type": "value"},
+                {"options": {"1": {"color": "green", "index": 1, "text": "LOADED"}}, "type": "value"}
+              ],
+              "thresholds": {"mode": "absolute", "steps": [{"color": "red", "value": null}, {"color": "green", "value": 1}]}
+            },
+            "overrides": []
+          },
+          "gridPos": {"h": 4, "w": 4, "x": 16, "y": 0},
+          "id": 4,
+          "options": {
+            "colorMode": "background",
+            "graphMode": "none",
+            "justifyMode": "auto",
+            "orientation": "auto",
+            "reduceOptions": {"calcs": ["lastNotNull"], "fields": "", "values": false},
+            "textMode": "auto"
+          },
+          "pluginVersion": "10.4.0",
+          "targets": [{"expr": "movie_api_model_loaded", "legendFormat": "LTR Model", "refId": "A"}],
+          "title": "LTR Model Status",
+          "type": "stat"
+        },
+        {
+          "datasource": {"type": "prometheus", "uid": "prometheus"},
+          "fieldConfig": {
+            "defaults": {
+              "color": {"mode": "thresholds"},
+              "mappings": [],
+              "thresholds": {"mode": "absolute", "steps": [{"color": "green", "value": null}, {"color": "yellow", "value": 0.01}, {"color": "red", "value": 0.05}]},
+              "unit": "percentunit"
+            },
+            "overrides": []
+          },
+          "gridPos": {"h": 4, "w": 4, "x": 20, "y": 0},
+          "id": 5,
+          "options": {
+            "colorMode": "value",
+            "graphMode": "area",
+            "justifyMode": "auto",
+            "orientation": "auto",
+            "reduceOptions": {"calcs": ["lastNotNull"], "fields": "", "values": false},
+            "textMode": "auto"
+          },
+          "pluginVersion": "10.4.0",
+          "targets": [{"expr": "sum(rate(movie_api_requests_total{status=\"error\"}[5m])) / sum(rate(movie_api_requests_total[5m]))", "legendFormat": "Error Rate", "refId": "A"}],
+          "title": "Error Rate",
+          "type": "stat"
+        },
+        {
+          "datasource": {"type": "prometheus", "uid": "prometheus"},
+          "fieldConfig": {
+            "defaults": {
+              "color": {"mode": "palette-classic"},
+              "custom": {
+                "axisBorderShow": false, "axisCenteredZero": false, "axisColorMode": "text", "axisLabel": "", "axisPlacement": "auto",
+                "barAlignment": 0, "drawStyle": "line", "fillOpacity": 10, "gradientMode": "none",
+                "hideFrom": {"legend": false, "tooltip": false, "viz": false},
+                "insertNulls": false, "lineInterpolation": "smooth", "lineWidth": 2, "pointSize": 5,
+                "scaleDistribution": {"type": "linear"}, "showPoints": "never", "spanNulls": false,
+                "stacking": {"group": "A", "mode": "none"}, "thresholdsStyle": {"mode": "off"}
+              },
+              "mappings": [],
+              "thresholds": {"mode": "absolute", "steps": [{"color": "green", "value": null}]},
+              "unit": "reqps"
+            },
+            "overrides": []
+          },
+          "gridPos": {"h": 8, "w": 12, "x": 0, "y": 4},
+          "id": 6,
+          "options": {
+            "legend": {"calcs": ["mean", "max"], "displayMode": "table", "placement": "bottom", "showLegend": true},
+            "tooltip": {"mode": "multi", "sort": "desc"}
+          },
+          "pluginVersion": "10.4.0",
+          "targets": [{"expr": "sum(rate(movie_api_requests_total[1m]))", "legendFormat": "Requests/sec", "refId": "A"}],
+          "title": "Request Rate",
+          "type": "timeseries"
+        },
+        {
+          "datasource": {"type": "prometheus", "uid": "prometheus"},
+          "fieldConfig": {
+            "defaults": {
+              "color": {"mode": "palette-classic"},
+              "custom": {
+                "axisBorderShow": false, "axisCenteredZero": false, "axisColorMode": "text", "axisLabel": "", "axisPlacement": "auto",
+                "barAlignment": 0, "drawStyle": "line", "fillOpacity": 10, "gradientMode": "none",
+                "hideFrom": {"legend": false, "tooltip": false, "viz": false},
+                "insertNulls": false, "lineInterpolation": "smooth", "lineWidth": 2, "pointSize": 5,
+                "scaleDistribution": {"type": "linear"}, "showPoints": "never", "spanNulls": false,
+                "stacking": {"group": "A", "mode": "none"}, "thresholdsStyle": {"mode": "off"}
+              },
+              "mappings": [],
+              "thresholds": {"mode": "absolute", "steps": [{"color": "green", "value": null}]},
+              "unit": "s"
+            },
+            "overrides": []
+          },
+          "gridPos": {"h": 8, "w": 12, "x": 12, "y": 4},
+          "id": 7,
+          "options": {
+            "legend": {"calcs": ["mean", "max"], "displayMode": "table", "placement": "bottom", "showLegend": true},
+            "tooltip": {"mode": "multi", "sort": "desc"}
+          },
+          "pluginVersion": "10.4.0",
+          "targets": [
+            {"expr": "histogram_quantile(0.50, sum(rate(movie_api_request_latency_seconds_bucket[1m])) by (le))", "legendFormat": "P50", "refId": "A"},
+            {"expr": "histogram_quantile(0.90, sum(rate(movie_api_request_latency_seconds_bucket[1m])) by (le))", "legendFormat": "P90", "refId": "B"},
+            {"expr": "histogram_quantile(0.95, sum(rate(movie_api_request_latency_seconds_bucket[1m])) by (le))", "legendFormat": "P95", "refId": "C"},
+            {"expr": "histogram_quantile(0.99, sum(rate(movie_api_request_latency_seconds_bucket[1m])) by (le))", "legendFormat": "P99", "refId": "D"}
+          ],
+          "title": "Request Latency Percentiles",
+          "type": "timeseries"
+        },
+        {
+          "datasource": {"type": "prometheus", "uid": "prometheus"},
+          "fieldConfig": {
+            "defaults": {
+              "color": {"mode": "palette-classic"},
+              "custom": {
+                "axisBorderShow": false, "axisCenteredZero": false, "axisColorMode": "text", "axisLabel": "", "axisPlacement": "auto",
+                "barAlignment": 0, "drawStyle": "line", "fillOpacity": 10, "gradientMode": "none",
+                "hideFrom": {"legend": false, "tooltip": false, "viz": false},
+                "insertNulls": false, "lineInterpolation": "smooth", "lineWidth": 2, "pointSize": 5,
+                "scaleDistribution": {"type": "linear"}, "showPoints": "never", "spanNulls": false,
+                "stacking": {"group": "A", "mode": "none"}, "thresholdsStyle": {"mode": "off"}
+              },
+              "mappings": [],
+              "thresholds": {"mode": "absolute", "steps": [{"color": "green", "value": null}]},
+              "unit": "s"
+            },
+            "overrides": []
+          },
+          "gridPos": {"h": 8, "w": 24, "x": 0, "y": 12},
+          "id": 8,
+          "options": {
+            "legend": {"calcs": ["mean", "max"], "displayMode": "table", "placement": "right", "showLegend": true},
+            "tooltip": {"mode": "multi", "sort": "desc"}
+          },
+          "pluginVersion": "10.4.0",
+          "targets": [
+            {"expr": "histogram_quantile(0.95, sum(rate(movie_api_embedding_latency_seconds_bucket[1m])) by (le))", "legendFormat": "Embedding (P95)", "refId": "A"},
+            {"expr": "histogram_quantile(0.95, sum(rate(movie_api_retrieval_latency_seconds_bucket[1m])) by (le))", "legendFormat": "Retrieval (P95)", "refId": "B"},
+            {"expr": "histogram_quantile(0.95, sum(rate(movie_api_rerank_latency_seconds_bucket[1m])) by (le))", "legendFormat": "Rerank (P95)", "refId": "C"}
+          ],
+          "title": "Pipeline Stage Latency (P95)",
+          "type": "timeseries"
+        }
+      ],
+      "refresh": "5s",
+      "schemaVersion": 39,
+      "tags": ["movie-api", "ml", "recommendations"],
+      "templating": {"list": []},
+      "time": {"from": "now-15m", "to": "now"},
+      "timepicker": {},
+      "timezone": "browser",
+      "title": "Movie Recommendation API",
+      "uid": "movie-api-dashboard",
+      "version": 1,
+      "weekStart": ""
+    }
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: grafana
+  labels:
+    app: grafana
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: grafana
+  template:
+    metadata:
+      labels:
+        app: grafana
+    spec:
+      containers:
+        - name: grafana
+          image: grafana/grafana:10.4.0
+          ports:
+            - containerPort: 3000
+              name: http
+          env:
+            - name: GF_SECURITY_ADMIN_USER
+              value: "admin"
+            - name: GF_SECURITY_ADMIN_PASSWORD
+              value: "admin123"
+            - name: GF_USERS_ALLOW_SIGN_UP
+              value: "false"
+            - name: GF_SERVER_ROOT_URL
+              value: "%(protocol)s://%(domain)s/"
+          resources:
+            requests:
+              cpu: 100m
+              memory: 128Mi
+            limits:
+              cpu: 500m
+              memory: 512Mi
+          livenessProbe:
+            httpGet:
+              path: /api/health
+              port: 3000
+            initialDelaySeconds: 30
+            periodSeconds: 10
+          readinessProbe:
+            httpGet:
+              path: /api/health
+              port: 3000
+            initialDelaySeconds: 5
+            periodSeconds: 5
+          volumeMounts:
+            - name: datasources
+              mountPath: /etc/grafana/provisioning/datasources
+            - name: dashboard-provider
+              mountPath: /etc/grafana/provisioning/dashboards/dashboards.yml
+              subPath: dashboards.yml
+            - name: dashboards
+              mountPath: /etc/grafana/provisioning/dashboards/movie-api.json
+              subPath: movie-api.json
+            - name: data
+              mountPath: /var/lib/grafana
+      volumes:
+        - name: datasources
+          configMap:
+            name: grafana-datasources
+        - name: dashboard-provider
+          configMap:
+            name: grafana-dashboard-provider
+        - name: dashboards
+          configMap:
+            name: grafana-dashboards
+        - name: data
+          emptyDir: {}
+      securityContext:
+        fsGroup: 472
+        runAsUser: 472
+        runAsNonRoot: true
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: grafana
+  labels:
+    app: grafana
+spec:
+  type: LoadBalancer
+  selector:
+    app: grafana
+  ports:
+    - name: http
+      port: 80
+      targetPort: 3000
+      protocol: TCP

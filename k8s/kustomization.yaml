@@ -7,9 +7,16 @@ metadata:
 namespace: default
 
 resources:
-  - ollama-configmap.yaml
-  - ollama-deployment.yaml
+  # Core infrastructure
+  - qdrant.yaml
   - azure-storage-secret.yaml
+  # Model serving
+  - model-serving.yaml
+  # Monitoring
+  - prometheus.yaml
+  - grafana.yaml
+  # Frontend
+  - frontend.yaml
 
 # Common labels for all resources
 commonLabels:
@@ -18,13 +25,17 @@ commonLabels:
 
 # Image customization (can override in overlays)
 images:
-  - name: ollama/ollama
+  - name: ghcr.io/abdala9512/dsrp-model-serving
     newTag: latest
+  - name: prom/prometheus
+    newTag: v2.51.0
+  - name: grafana/grafana
+    newTag: "10.4.0"
 
 # ConfigMap generator for dynamic config
 configMapGenerator:
   - name: pipeline-config
     literals:
-      - QDRANT_URL=http://qdrant:6333
+      - QDRANT_URL=http://qdrant:80
       - QDRANT_COLLECTION=imdb-movies-hybrid
       - EMBEDDING_MODEL=sentence-transformers/all-MiniLM-L6-v2

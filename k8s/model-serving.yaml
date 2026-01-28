@@ -1,0 +1,136 @@
+# Model Serving API Deployment
+# Movie recommendation API using LightGBM LTR + Qdrant + Sentence Transformers
+---
+apiVersion: v1
+kind: Secret
+metadata:
+  name: model-serving-secrets
+  labels:
+    app: model-serving
+type: Opaque
+stringData:
+  # IMPORTANT: Replace with your actual DagsHub token
+  # Get your token at: https://dagshub.com/user/settings/tokens
+  DAGSHUB_USER_TOKEN: "your-dagshub-token-here"
+---
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: model-serving-config
+  labels:
+    app: model-serving
+data:
+  # Server configuration
+  HOST: "0.0.0.0"
+  PORT: "8000"
+  WORKERS: "2"
+
+  # DagsHub/MLflow configuration
+  DAGSHUB_REPO_OWNER: "abdala9512"
+  DAGSHUB_REPO_NAME: "dsrp-machine-learning-engineering-4"
+
+  # LTR Model
+  LTR_MODEL_NAME: "ltr-dsrpflix-prd-ENE12"
+  LTR_MODEL_ALIAS: "champion"
+
+  # Embedding Model
+  EMBEDDING_MODEL: "sentence-transformers/all-MiniLM-L6-v2"
+
+  # Qdrant - uses internal K8s service DNS
+  QDRANT_URL: "http://qdrant:80"
+  QDRANT_COLLECTION: "imdb-movies-hybrid"
+
+  # Search parameters
+  TOP_K_RETRIEVAL: "100"
+  TOP_K_FINAL: "10"
+
+  # Data path (mounted via ConfigMap or PVC)
+  MOVIES_DB_PATH: "/app/data/complete_imdb_database.parquet"
+
+  # Mock mode (set to "true" if Qdrant is unavailable)
+  MOCK_QDRANT: "false"
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: model-serving
+  labels:
+    app: model-serving
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: model-serving
+  template:
+    metadata:
+      labels:
+        app: model-serving
+      annotations:
+        prometheus.io/scrape: "true"
+        prometheus.io/port: "8000"
+        prometheus.io/path: "/metrics"
+    spec:
+      containers:
+        - name: model-serving
+          image: ghcr.io/abdala9512/dsrp-model-serving:latest
+          imagePullPolicy: Always
+          ports:
+            - containerPort: 8000
+              name: http
+          envFrom:
+            - configMapRef:
+                name: model-serving-config
+            - secretRef:
+                name: model-serving-secrets
+          resources:
+            requests:
+              cpu: 500m
+              memory: 2Gi
+            limits:
+              cpu: 2000m
+              memory: 4Gi
+          livenessProbe:
+            httpGet:
+              path: /health
+              port: 8000
+            initialDelaySeconds: 120
+            periodSeconds: 30
+            timeoutSeconds: 10
+            failureThreshold: 3
+          readinessProbe:
+            httpGet:
+              path: /health
+              port: 8000
+            initialDelaySeconds: 60
+            periodSeconds: 10
+            timeoutSeconds: 5
+            failureThreshold: 3
+          volumeMounts:
+            - name: data-volume
+              mountPath: /app/data
+            - name: prometheus-multiproc
+              mountPath: /tmp/prometheus_multiproc_dir
+      volumes:
+        - name: data-volume
+          emptyDir: {}
+        - name: prometheus-multiproc
+          emptyDir: {}
+      # Uncomment if your GHCR image is private
+      # imagePullSecrets:
+      #   - name: ghcr-pull-secret
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: model-serving
+  labels:
+    app: model-serving
+spec:
+  type: LoadBalancer
+  selector:
+    app: model-serving
+  ports:
+    - name: http
+      port: 80
+      targetPort: 8000
+      protocol: TCP

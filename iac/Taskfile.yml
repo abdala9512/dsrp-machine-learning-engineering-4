@@ -870,20 +870,179 @@ tasks:
         echo "   Pod: $POD:$POD_PATH"
         echo "   Azure: $CONTAINER/$REMOTE_PREFIX"
 
-  ollama:deploy:
-    desc: "Despliega Ollama en Kubernetes"
+  # ===========================================================================
+  # DNS Tasks for ML Pipeline Services
+  # ===========================================================================
+
+  dns:setup-all:
+    desc: "Configura DNS labels para todos los servicios del pipeline ML"
     summary: |
-      Despliega Ollama con el modelo configurado en el cluster de Kubernetes.
+      Configura DNS labels para model-serving, prometheus y grafana.
 
       Uso:
-        task ollama:deploy
-        task ollama:deploy MODEL=mistral:7b
+        task dns:setup-all PREFIX=dsrp
+        task dns:setup-all PREFIX=myproject NAMESPACE=ml
 
-      Variables:
-        MODEL: Modelo de Ollama (default: llama3.2:3b)
-        NAMESPACE: Namespace (default: default)
+      Esto creará:
+        - dsrp-model-serving.<region>.cloudapp.azure.com
+        - dsrp-prometheus.<region>.cloudapp.azure.com
+        - dsrp-grafana.<region>.cloudapp.azure.com
     vars:
-      MODEL: '{{.MODEL | default "llama3.2:3b"}}'
+      PREFIX: '{{.PREFIX | default "dsrp"}}'
+      NAMESPACE: '{{.NAMESPACE | default "default"}}'
+    cmds:
+      - |
+        set -euo pipefail
+
+        PREFIX="{{.PREFIX}}"
+        NAMESPACE="{{.NAMESPACE}}"
+
+        echo ""
+        echo "🌐 Configurando DNS para servicios del pipeline ML"
+        echo "   Prefix:    $PREFIX"
+        echo "   Namespace: $NAMESPACE"
+        echo ""
+
+        # List of services to configure
+        SERVICES=("model-serving" "prometheus" "grafana")
+
+        for SERVICE in "${SERVICES[@]}"; do
+          echo "=================================================="
+          echo "📍 Configurando DNS para: $SERVICE"
+          echo "=================================================="
+
+          # Check if service exists
+          if ! kubectl get svc "$SERVICE" -n "$NAMESPACE" &> /dev/null; then
+            echo "⏭️  Servicio $SERVICE no existe, saltando..."
+            continue
+          fi
+
+          # Check if LoadBalancer
+          SVC_TYPE=$(kubectl get svc "$SERVICE" -n "$NAMESPACE" -o jsonpath='{.spec.type}')
+          if [ "$SVC_TYPE" != "LoadBalancer" ]; then
+            echo "⏭️  Servicio $SERVICE es tipo $SVC_TYPE (no LoadBalancer), saltando..."
+            continue
+          fi
+
+          # Get IP
+          IP=$(kubectl get svc "$SERVICE" -n "$NAMESPACE" -o jsonpath='{.status.loadBalancer.ingress[0].ip}' 2>/dev/null || echo "")
+          if [ -z "$IP" ]; then
+            echo "⏳ Esperando IP para $SERVICE..."
+            for i in {1..6}; do
+              sleep 10
+              IP=$(kubectl get svc "$SERVICE" -n "$NAMESPACE" -o jsonpath='{.status.loadBalancer.ingress[0].ip}' 2>/dev/null || echo "")
+              if [ -n "$IP" ]; then break; fi
+              echo "   Intento $i/6..."
+            done
+          fi
+
+          if [ -z "$IP" ]; then
+            echo "⚠️  No se pudo obtener IP para $SERVICE"
+            continue
+          fi
+
+          echo "   IP: $IP"
+
+          # Find Azure Public IP resource
+          RESULT=$(az network public-ip list --query "[?ipAddress=='$IP'].[resourceGroup,name]" -o tsv 2>/dev/null | head -n1)
+
+          if [ -z "$RESULT" ]; then
+            echo "⚠️  No se encontró Public IP en Azure para $SERVICE"
+            continue
+          fi
+
+          RG=$(echo "$RESULT" | awk '{print $1}')
+          NAME=$(echo "$RESULT" | awk '{print $2}')
+          DNS_LABEL="${PREFIX}-${SERVICE}"
+
+          # Set DNS label
+          echo "   Asignando DNS: $DNS_LABEL"
+          if az network public-ip update \
+            --resource-group "$RG" \
+            --name "$NAME" \
+            --dns-name "$DNS_LABEL" \
+            --output none 2>&1; then
+
+            FQDN=$(az network public-ip show \
+              --resource-group "$RG" \
+              --name "$NAME" \
+              --query "dnsSettings.fqdn" -o tsv)
+
+            echo "   ✅ DNS configurado: $FQDN"
+          else
+            echo "   ⚠️  Error configurando DNS para $SERVICE"
+          fi
+          echo ""
+        done
+
+        echo "=================================================="
+        echo "✅ Configuración DNS completada"
+        echo "=================================================="
+        echo ""
+        echo "📋 Resumen de URLs:"
+        for SERVICE in "${SERVICES[@]}"; do
+          if kubectl get svc "$SERVICE" -n "$NAMESPACE" &> /dev/null; then
+            IP=$(kubectl get svc "$SERVICE" -n "$NAMESPACE" -o jsonpath='{.status.loadBalancer.ingress[0].ip}' 2>/dev/null || echo "")
+            if [ -n "$IP" ]; then
+              RESULT=$(az network public-ip list --query "[?ipAddress=='$IP'].dnsSettings.fqdn" -o tsv 2>/dev/null | head -n1)
+              if [ -n "$RESULT" ]; then
+                echo "   $SERVICE: http://$RESULT"
+              fi
+            fi
+          fi
+        done
+
+  dns:show-urls:
+    desc: "Muestra las URLs de todos los servicios del pipeline ML"
+    vars:
+      NAMESPACE: '{{.NAMESPACE | default "default"}}'
+    cmds:
+      - |
+        set -euo pipefail
+
+        NAMESPACE="{{.NAMESPACE}}"
+
+        echo ""
+        echo "🌐 URLs de servicios del pipeline ML"
+        echo "   Namespace: $NAMESPACE"
+        echo ""
+
+        SERVICES=("frontend" "model-serving" "prometheus" "grafana" "qdrant")
+
+        printf "%-15s %-20s %-50s\n" "SERVICE" "IP" "FQDN"
+        printf "%-15s %-20s %-50s\n" "-------" "--" "----"
+
+        for SERVICE in "${SERVICES[@]}"; do
+          if kubectl get svc "$SERVICE" -n "$NAMESPACE" &> /dev/null 2>&1; then
+            IP=$(kubectl get svc "$SERVICE" -n "$NAMESPACE" -o jsonpath='{.status.loadBalancer.ingress[0].ip}' 2>/dev/null || echo "-")
+            if [ -n "$IP" ] && [ "$IP" != "-" ]; then
+              FQDN=$(az network public-ip list --query "[?ipAddress=='$IP'].dnsSettings.fqdn" -o tsv 2>/dev/null | head -n1)
+              if [ -z "$FQDN" ]; then FQDN="-"; fi
+            else
+              IP="-"
+              FQDN="-"
+            fi
+            printf "%-15s %-20s %-50s\n" "$SERVICE" "$IP" "$FQDN"
+          fi
+        done
+
+        echo ""
+        echo "💡 Para configurar DNS:"
+        echo "   task dns:set-label SERVICE=<nombre> LABEL=<dns-label>"
+        echo "   task dns:setup-all PREFIX=dsrp"
+
+  monitoring:deploy:
+    desc: "Despliega Prometheus y Grafana para monitoreo del pipeline ML"
+    summary: |
+      Despliega el stack de monitoreo completo.
+
+      Uso:
+        task monitoring:deploy
+        task monitoring:deploy NAMESPACE=monitoring
+
+      Después del deploy:
+        task dns:setup-all PREFIX=dsrp
+    vars:
       NAMESPACE: '{{.NAMESPACE | default "default"}}'
     preconditions:
       - sh: command -v kubectl &> /dev/null
@@ -892,93 +1051,106 @@ tasks:
       - |
         set -euo pipefail
 
-        MODEL="{{.MODEL}}"
         NAMESPACE="{{.NAMESPACE}}"
         K8S_DIR="../k8s"
 
         echo ""
-        echo "🤖 Desplegando Ollama en Kubernetes"
-        echo "   Model:     $MODEL"
+        echo "📊 Desplegando stack de monitoreo"
         echo "   Namespace: $NAMESPACE"
         echo ""
 
-        # Update ConfigMap with model
-        echo "1️⃣ Actualizando ConfigMap con modelo..."
-        kubectl create configmap ollama-config \
-          --namespace "$NAMESPACE" \
-          --from-literal=OLLAMA_MODEL="$MODEL" \
-          --from-literal=OLLAMA_HOST="0.0.0.0" \
-          --from-literal=OLLAMA_KEEP_ALIVE="24h" \
-          --from-literal=OLLAMA_NUM_PARALLEL="2" \
-          --dry-run=client -o yaml | kubectl apply -f -
+        # Apply Prometheus
+        echo "1️⃣ Desplegando Prometheus..."
+        kubectl apply -f "$K8S_DIR/prometheus.yaml" -n "$NAMESPACE"
 
-        # Apply deployment
-        echo "2️⃣ Aplicando deployment..."
-        kubectl apply -f "$K8S_DIR/ollama-deployment.yaml" -n "$NAMESPACE"
+        # Apply Grafana
+        echo "2️⃣ Desplegando Grafana..."
+        kubectl apply -f "$K8S_DIR/grafana.yaml" -n "$NAMESPACE"
 
-        # Wait for rollout
-        echo "3️⃣ Esperando rollout..."
-        kubectl rollout status deployment/ollama -n "$NAMESPACE" --timeout=300s
+        # Wait for deployments
+        echo "3️⃣ Esperando deployments..."
+        kubectl rollout status deployment/prometheus -n "$NAMESPACE" --timeout=120s || true
+        kubectl rollout status deployment/grafana -n "$NAMESPACE" --timeout=120s || true
 
         echo ""
-        echo "✅ Ollama desplegado exitosamente!"
+        echo "✅ Stack de monitoreo desplegado!"
         echo ""
-        echo "📋 Verificar estado:"
-        echo "   kubectl get pods -l app=ollama -n $NAMESPACE"
+        echo "📋 Estado:"
+        kubectl get pods -l 'app in (prometheus,grafana)' -n "$NAMESPACE"
         echo ""
-        echo "🔗 Acceder localmente:"
-        echo "   kubectl port-forward svc/ollama 11434:11434 -n $NAMESPACE"
-        echo "   curl http://localhost:11434/api/tags"
+        echo "🔗 Servicios:"
+        kubectl get svc -l 'app in (prometheus,grafana)' -n "$NAMESPACE"
+        echo ""
+        echo "💡 Próximos pasos:"
+        echo "   1. Esperar a que los LoadBalancer obtengan IP"
+        echo "   2. task dns:setup-all PREFIX=dsrp"
+        echo ""
+        echo "📊 Grafana credentials:"
+        echo "   Usuario: admin"
+        echo "   Password: admin123"
 
-  ollama:change-model:
-    desc: "Cambia el modelo de Ollama en un deployment existente"
+  model-serving:deploy:
+    desc: "Despliega el API de model serving"
     summary: |
-      Actualiza el modelo de Ollama sin recrear el deployment.
+      Despliega el API de recomendación de películas.
 
       Uso:
-        task ollama:change-model MODEL=mistral:7b
+        task model-serving:deploy
+        task model-serving:deploy DAGSHUB_TOKEN=<token>
 
-      Modelos disponibles:
-        - llama3.2:3b (default)
-        - llama3.2:1b (lightweight)
-        - mistral:7b
-        - codellama:7b
-        - phi:2.7b
+      IMPORTANTE: Actualiza el token de DagsHub en el secret antes de desplegar.
     vars:
-      MODEL: '{{.MODEL | default ""}}'
       NAMESPACE: '{{.NAMESPACE | default "default"}}'
+      DAGSHUB_TOKEN: '{{.DAGSHUB_TOKEN | default ""}}'
     preconditions:
-      - sh: '[ -n "{{.MODEL}}" ]'
-        msg: "Error: MODEL es requerido. Uso: task ollama:change-model MODEL=mistral:7b"
+      - sh: command -v kubectl &> /dev/null
+        msg: "Error: kubectl no está instalado"
     cmds:
       - |
         set -euo pipefail
 
-        MODEL="{{.MODEL}}"
         NAMESPACE="{{.NAMESPACE}}"
+        K8S_DIR="../k8s"
+        DAGSHUB_TOKEN="{{.DAGSHUB_TOKEN}}"
 
         echo ""
-        echo "🔄 Cambiando modelo de Ollama"
-        echo "   Nuevo modelo: $MODEL"
-        echo "   Namespace:    $NAMESPACE"
+        echo "🎬 Desplegando Model Serving API"
+        echo "   Namespace: $NAMESPACE"
         echo ""
 
-        # Update ConfigMap
-        echo "1️⃣ Actualizando ConfigMap..."
-        kubectl patch configmap ollama-config -n "$NAMESPACE" \
-          --type merge \
-          -p "{\"data\":{\"OLLAMA_MODEL\":\"$MODEL\"}}"
+        # Update secret if token provided
+        if [ -n "$DAGSHUB_TOKEN" ]; then
+          echo "1️⃣ Actualizando secret con DagsHub token..."
+          kubectl create secret generic model-serving-secrets \
+            --namespace "$NAMESPACE" \
+            --from-literal=DAGSHUB_USER_TOKEN="$DAGSHUB_TOKEN" \
+            --dry-run=client -o yaml | kubectl apply -f -
+        else
+          echo "⚠️  DAGSHUB_TOKEN no proporcionado."
+          echo "   Asegúrate de actualizar el secret manualmente:"
+          echo "   kubectl edit secret model-serving-secrets -n $NAMESPACE"
+          echo ""
+        fi
 
-        # Restart deployment to pull new model
-        echo "2️⃣ Reiniciando deployment..."
-        kubectl rollout restart deployment/ollama -n "$NAMESPACE"
+        # Apply deployment
+        echo "2️⃣ Aplicando deployment..."
+        kubectl apply -f "$K8S_DIR/model-serving.yaml" -n "$NAMESPACE"
 
         # Wait for rollout
         echo "3️⃣ Esperando rollout..."
-        kubectl rollout status deployment/ollama -n "$NAMESPACE" --timeout=600s
+        kubectl rollout status deployment/model-serving -n "$NAMESPACE" --timeout=300s || true
 
         echo ""
-        echo "✅ Modelo cambiado a: $MODEL"
+        echo "✅ Model Serving API desplegado!"
         echo ""
-        echo "📋 Verificar modelo activo:"
-        echo "   kubectl exec -it \$(kubectl get pod -l app=ollama -o name | head -1) -- ollama list"
+        echo "📋 Estado:"
+        kubectl get pods -l app=model-serving -n "$NAMESPACE"
+        echo ""
+        echo "🔗 Servicio:"
+        kubectl get svc model-serving -n "$NAMESPACE"
+        echo ""
+        echo "💡 Próximos pasos:"
+        echo "   1. Esperar a que el LoadBalancer obtenga IP"
+        echo "   2. task dns:set-label SERVICE=model-serving LABEL=dsrp-model-serving"
+        echo ""
+        echo "📖 API Docs disponibles en: http://<IP>/docs"

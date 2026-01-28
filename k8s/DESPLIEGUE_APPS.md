@@ -340,3 +340,347 @@ kubectl delete namespace airflow
   ```
 
 > Nota: Este es un despliegue educativo. Para produccion, considera usar PostgreSQL externo (Azure Database for PostgreSQL), configurar autenticacion robusta, y habilitar HTTPS via Ingress.
+
+---
+
+## Despliegue del Model Serving API
+
+API de recomendacion de peliculas usando LightGBM LTR, Qdrant y Sentence Transformers.
+
+### Componentes
+- **LitServe**: Framework de alto rendimiento para servir modelos ML
+- **Sentence Transformers**: Generacion de embeddings para queries
+- **Qdrant**: Busqueda hibrida (densa + BM25)
+- **LightGBM LTR**: Re-ranking de resultados
+- **Prometheus metrics**: Endpoint `/metrics` para monitoreo
+
+### Prerrequisitos
+- Qdrant desplegado y con la coleccion `imdb-movies-hybrid` indexada
+- Token de DagsHub para acceder al modelo LTR en MLflow
+- Imagen publicada en GHCR (workflow `model-serving-docker.yml`)
+
+### Instalacion
+
+1) Actualiza el secret con tu token de DagsHub:
+```bash
+# Opcion 1: Editar el secret directamente
+kubectl edit secret model-serving-secrets
+
+# Opcion 2: Crear el secret con el token
+kubectl create secret generic model-serving-secrets \
+  --from-literal=DAGSHUB_USER_TOKEN="tu-token-aqui" \
+  --dry-run=client -o yaml | kubectl apply -f -
+```
+
+2) Aplica el manifiesto:
+```bash
+kubectl apply -f k8s/model-serving.yaml
+```
+
+3) Verifica el estado:
+```bash
+kubectl get pods -l app=model-serving
+kubectl logs -l app=model-serving -f
+```
+
+4) Obtener la IP publica:
+```bash
+kubectl get svc model-serving
+```
+
+5) Asignar DNS label:
+```bash
+cd iac
+task dns:set-label SERVICE=model-serving LABEL=dsrp-model-serving
+```
+
+### Endpoints
+
+| Endpoint | Metodo | Descripcion |
+|----------|--------|-------------|
+| `/predict` | POST | Busqueda de peliculas |
+| `/health` | GET | Health check |
+| `/metrics` | GET | Metricas Prometheus |
+| `/docs` | GET | Documentacion OpenAPI |
+
+### Ejemplo de uso
+
+```python
+import requests
+
+url = "http://dsrp-model-serving.<region>.cloudapp.azure.com/predict"
+
+response = requests.post(url, json={
+    "query": "action movies similar to the dark knight",
+    "top_k": 10
+})
+
+results = response.json()
+print(f"Found {results['count']} movies:")
+for movie in results['results']:
+    print(f"  - {movie['title']} (score: {movie['ltr_score']:.2f})")
+```
+
+### Configuracion
+
+Variables de entorno configurables en el ConfigMap:
+
+| Variable | Default | Descripcion |
+|----------|---------|-------------|
+| `QDRANT_URL` | `http://qdrant:80` | URL del servicio Qdrant |
+| `QDRANT_COLLECTION` | `imdb-movies-hybrid` | Nombre de la coleccion |
+| `LTR_MODEL_NAME` | `ltr-dsrpflix-prd-ENE12` | Nombre del modelo en MLflow |
+| `LTR_MODEL_ALIAS` | `champion` | Alias del modelo |
+| `TOP_K_RETRIEVAL` | `100` | Candidatos a recuperar |
+| `TOP_K_FINAL` | `10` | Resultados finales |
+| `WORKERS` | `2` | Workers de LitServe |
+
+### Recursos
+
+El manifiesto actual solicita:
+- CPU: 500m (request) / 2000m (limit)
+- Memoria: 2Gi (request) / 4Gi (limit)
+
+> Nota: El modelo de embeddings se descarga al iniciar (~90MB). El primer request puede tardar mientras se carga el modelo LTR desde MLflow.
+
+---
+
+## Despliegue de Prometheus (Monitoreo)
+
+Prometheus recolecta metricas del Model Serving API y otros servicios del cluster.
+
+### Instalacion
+
+1) Aplica el manifiesto:
+```bash
+kubectl apply -f k8s/prometheus.yaml
+```
+
+2) Verifica el estado:
+```bash
+kubectl get pods -l app=prometheus
+```
+
+3) Obtener la IP publica:
+```bash
+kubectl get svc prometheus
+```
+
+4) Asignar DNS label:
+```bash
+cd iac
+task dns:set-label SERVICE=prometheus LABEL=dsrp-prometheus
+```
+
+### Acceso
+
+- **UI Web**: `http://dsrp-prometheus.<region>.cloudapp.azure.com`
+- **API**: `http://dsrp-prometheus.<region>.cloudapp.azure.com/api/v1/...`
+
+Para acceso local:
+```bash
+kubectl port-forward svc/prometheus 9090:80
+# Acceder en: http://localhost:9090
+```
+
+### Targets configurados
+
+| Job | Target | Descripcion |
+|-----|--------|-------------|
+| `prometheus` | `localhost:9090` | Metricas de Prometheus |
+| `model-serving` | `model-serving:80` | API de recomendaciones |
+| `qdrant` | `qdrant:6333` | Base de datos vectorial |
+
+### Queries utiles
+
+```promql
+# Request rate (requests/sec)
+sum(rate(movie_api_requests_total[1m]))
+
+# P95 latency
+histogram_quantile(0.95, sum(rate(movie_api_request_latency_seconds_bucket[5m])) by (le))
+
+# Error rate
+sum(rate(movie_api_requests_total{status="error"}[5m])) / sum(rate(movie_api_requests_total[5m]))
+
+# Model loaded status
+movie_api_model_loaded
+
+# Qdrant available status
+movie_api_qdrant_available
+```
+
+### Recursos
+
+- CPU: 100m (request) / 500m (limit)
+- Memoria: 256Mi (request) / 1Gi (limit)
+- Retencion: 15 dias
+
+---
+
+## Despliegue de Grafana (Visualizacion)
+
+Grafana proporciona dashboards para visualizar las metricas de Prometheus.
+
+### Instalacion
+
+1) Aplica el manifiesto:
+```bash
+kubectl apply -f k8s/grafana.yaml
+```
+
+2) Verifica el estado:
+```bash
+kubectl get pods -l app=grafana
+```
+
+3) Obtener la IP publica:
+```bash
+kubectl get svc grafana
+```
+
+4) Asignar DNS label:
+```bash
+cd iac
+task dns:set-label SERVICE=grafana LABEL=dsrp-grafana
+```
+
+### Acceso
+
+- **URL**: `http://dsrp-grafana.<region>.cloudapp.azure.com`
+- **Usuario**: `admin`
+- **Password**: `admin123`
+
+Para acceso local:
+```bash
+kubectl port-forward svc/grafana 3000:80
+# Acceder en: http://localhost:3000
+```
+
+### Dashboards incluidos
+
+**Movie Recommendation API** - Dashboard pre-configurado con:
+- Request rate y latencia (P50, P90, P95, P99)
+- Estado de componentes (Qdrant, LTR Model)
+- Error rate
+- Pipeline stage latency (Embedding, Retrieval, Rerank)
+- Requests by status (success/error)
+
+### Agregar dashboards personalizados
+
+1) Accede a Grafana
+2) Click en "+" > "Import"
+3) Pega el JSON del dashboard o usa un ID de Grafana.com
+4) Selecciona "Prometheus" como datasource
+
+### Recursos
+
+- CPU: 100m (request) / 500m (limit)
+- Memoria: 128Mi (request) / 512Mi (limit)
+
+---
+
+## Despliegue rapido del stack completo
+
+Para desplegar todo el stack de monitoreo de una vez:
+
+```bash
+# Desde el directorio iac/
+cd iac
+
+# Desplegar Prometheus y Grafana
+task monitoring:deploy
+
+# Desplegar Model Serving API (requiere DAGSHUB_TOKEN)
+task model-serving:deploy DAGSHUB_TOKEN="tu-token-aqui"
+
+# Configurar DNS para todos los servicios
+task dns:setup-all PREFIX=dsrp
+
+# Ver todas las URLs
+task dns:show-urls
+```
+
+### Orden de despliegue recomendado
+
+1. **Qdrant** - Base de datos vectorial
+2. **Model Serving** - API de recomendaciones
+3. **Prometheus** - Recoleccion de metricas
+4. **Grafana** - Visualizacion
+
+```bash
+# 1. Qdrant
+kubectl apply -f k8s/qdrant.yaml
+
+# 2. Model Serving (despues de configurar el secret)
+kubectl apply -f k8s/model-serving.yaml
+
+# 3. Prometheus
+kubectl apply -f k8s/prometheus.yaml
+
+# 4. Grafana
+kubectl apply -f k8s/grafana.yaml
+
+# 5. Frontend (opcional)
+kubectl apply -f k8s/frontend.yaml
+
+# 6. Configurar DNS para todos
+cd iac && task dns:setup-all PREFIX=dsrp
+```
+
+### Verificar el stack completo
+
+```bash
+# Ver todos los pods
+kubectl get pods
+
+# Ver todos los servicios
+kubectl get svc
+
+# Ver URLs con DNS
+cd iac && task dns:show-urls
+```
+
+### URLs finales (ejemplo)
+
+| Servicio | URL |
+|----------|-----|
+| Frontend | `http://dsrp-frontend.eastus.cloudapp.azure.com` |
+| Model Serving | `http://dsrp-model-serving.eastus.cloudapp.azure.com` |
+| Prometheus | `http://dsrp-prometheus.eastus.cloudapp.azure.com` |
+| Grafana | `http://dsrp-grafana.eastus.cloudapp.azure.com` |
+| Qdrant | `http://dsrp-qdrant.eastus.cloudapp.azure.com` |
+
+---
+
+## Troubleshooting general
+
+### Pods en estado Pending
+```bash
+kubectl describe pod <pod-name>
+# Verificar eventos y recursos disponibles
+```
+
+### LoadBalancer sin IP
+```bash
+kubectl get svc <service-name> -o wide
+# Esperar unos minutos, Azure puede tardar en asignar IP
+```
+
+### Verificar logs
+```bash
+kubectl logs -l app=<app-name> -f
+kubectl logs <pod-name> --previous  # logs del container anterior si crasheo
+```
+
+### Reiniciar deployment
+```bash
+kubectl rollout restart deployment/<deployment-name>
+kubectl rollout status deployment/<deployment-name>
+```
+
+### Eliminar y recrear
+```bash
+kubectl delete -f k8s/<manifest>.yaml
+kubectl apply -f k8s/<manifest>.yaml
+```
