@@ -15,7 +15,7 @@ COPY requirements.txt .
 RUN pip install --no-cache-dir -r requirements.txt
 
 # Pre-download the embedding model to speed up job execution
-RUN python -c "from sentence_transformers import SentenceTransformer; import mlflow; print('All dependencies installed successfully')"
+RUN python -c "from sentence_transformers import SentenceTransformer; print('All dependencies installed successfully')"
 
 # Copy application code
 COPY main.py .
