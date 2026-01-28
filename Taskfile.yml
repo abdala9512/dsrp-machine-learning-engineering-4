@@ -5,14 +5,26 @@ version: '3'
 # =============================================================================
 # This Taskfile orchestrates the entire deployment of the MLOps platform.
 #
-# Quick Start:
-#   task deploy:all              # Deploy everything from scratch
-#   task deploy:apps             # Deploy only applications (assumes infra exists)
-#   task status                  # Check status of all components
+# Deployment Modes:
+#   task deploy:batch            # Batch mode: Airflow + Qdrant (no frontend)
+#   task deploy:realtime         # Real-time: APIs, ML serving, frontend, monitoring
+#   task deploy:all              # Deploy everything (all components)
+#
+# Qdrant Initialization:
+#   task qdrant:init             # Populate Qdrant with movie data
+#   task qdrant:status           # Check collection status
+#   task qdrant:init:delete      # Delete init job (to re-run)
+#
+# Destroy (auto-detects what's deployed):
+#   task destroy:all             # Remove all deployed apps (auto-detect mode)
+#   task destroy:batch           # Remove batch mode apps only
+#   task destroy:realtime        # Remove real-time mode apps only
+#   task destroy:infra           # Destroy AKS cluster (DANGER)
 #
 # Individual Components:
 #   task deploy:infra            # Setup backend + terraform
-#   task deploy:app APP=airflow  # Deploy a specific app
+#   task deploy:app APP=frontend # Deploy a specific app
+#   task status                  # Check status of all components
 #   task dns:configure           # Configure DNS for all apps
 # =============================================================================
 
@@ -35,8 +47,21 @@ vars:
   # Types: helm, kubectl
   APPLICATIONS: |
     frontend|default|k8s/frontend.yaml|frontend|dsrp-frontend|kubectl
+    backend|default|k8s/backend.yaml|backend|dsrp-backend|kubectl
+    model-serving|default|k8s/model-serving.yaml|model-serving|dsrp-model-serving|kubectl
     qdrant|default|k8s/qdrant.yaml|qdrant|qdrant-dsrp|kubectl
+    prometheus|default|k8s/prometheus.yaml|prometheus|prometheus-dsrp|kubectl
+    grafana|default|k8s/grafana.yaml|grafana|grafana-dsrp|kubectl
     airflow|airflow|k8s/airflow-values.yaml|airflow-api-server|airflow-dsrp|helm
+
+  # ==========================================================================
+  # DEPLOYMENT MODES
+  # ==========================================================================
+  # Batch mode: Airflow for orchestration + supporting services
+  BATCH_APPS: "qdrant airflow"
+
+  # Real-time mode: APIs, ML serving, frontend, monitoring
+  REALTIME_APPS: "qdrant model-serving backend frontend prometheus grafana"
 
 includes:
   iac:
@@ -59,7 +84,7 @@ tasks:
   # FULL DEPLOYMENT
   # ===========================================================================
   deploy:all:
-    desc: "Deploy everything: infrastructure + applications + DNS"
+    desc: "Deploy everything: infrastructure + all applications + DNS"
     summary: |
       Complete deployment of the MLOps platform from scratch.
 
@@ -67,8 +92,12 @@ tasks:
         1. Setup Terraform backend (Azure Storage)
         2. Deploy AKS cluster with Terraform
         3. Get AKS credentials
-        4. Deploy all applications (Frontend, Qdrant, Airflow)
+        4. Deploy ALL applications (batch + real-time components)
         5. Configure DNS for all applications
+
+      For targeted deployments, use:
+        - task deploy:batch     # Airflow + Qdrant only
+        - task deploy:realtime  # APIs, ML serving, frontend, monitoring
 
       Usage:
         task deploy:all
@@ -163,11 +192,111 @@ tasks:
     desc: "Deploy all applications"
     cmds:
       - task: deploy:app
-        vars: { APP: frontend }
-      - task: deploy:app
         vars: { APP: qdrant }
       - task: deploy:app
+        vars: { APP: model-serving }
+      - task: deploy:app
+        vars: { APP: backend }
+      - task: deploy:app
+        vars: { APP: frontend }
+      - task: deploy:app
+        vars: { APP: prometheus }
+      - task: deploy:app
+        vars: { APP: grafana }
+      - task: deploy:app
         vars: { APP: airflow }
+
+  # ===========================================================================
+  # DEPLOYMENT MODES
+  # ===========================================================================
+  deploy:batch:
+    desc: "Deploy batch mode (Airflow + Qdrant for batch processing)"
+    summary: |
+      Deploys the batch processing stack:
+        - Qdrant: Vector database for embeddings storage
+        - Airflow: Workflow orchestration for batch ML pipelines
+
+      Usage:
+        task deploy:batch
+    cmds:
+      - |
+        set -euo pipefail
+        echo "🔄 Deploying BATCH mode..."
+        echo "   Components: {{.BATCH_APPS}}"
+        echo ""
+
+        for app in {{.BATCH_APPS}}; do
+          task deploy:app APP="$app"
+        done
+
+        # Mark deployment mode
+        kubectl create configmap dsrp-deployment-mode \
+          --from-literal=mode=batch \
+          --from-literal=apps="{{.BATCH_APPS}}" \
+          --dry-run=client -o yaml | kubectl apply -f -
+
+        echo ""
+        echo "✅ Batch mode deployed!"
+        echo ""
+        echo "📋 Deployed components:"
+        for app in {{.BATCH_APPS}}; do
+          echo "   - $app"
+        done
+
+  deploy:realtime:
+    desc: "Deploy real-time mode (APIs, ML serving, frontend, monitoring)"
+    summary: |
+      Deploys the real-time serving stack:
+        - Qdrant: Vector database for similarity search
+        - Model-serving: ML inference API (LightGBM LTR + embeddings)
+        - Backend: API orchestration layer
+        - Frontend: User interface
+        - Prometheus: Metrics collection
+        - Grafana: Monitoring dashboards
+
+      By default, also initializes Qdrant with movie data.
+
+      Usage:
+        task deploy:realtime                  # Deploy + init Qdrant
+        task deploy:realtime SKIP_INIT=true   # Deploy without init
+    vars:
+      SKIP_INIT: '{{.SKIP_INIT | default "false"}}'
+    cmds:
+      - |
+        set -euo pipefail
+        echo "⚡ Deploying REAL-TIME mode..."
+        echo "   Components: {{.REALTIME_APPS}}"
+        echo "   Initialize Qdrant: {{if eq .SKIP_INIT "true"}}No{{else}}Yes{{end}}"
+        echo ""
+
+        for app in {{.REALTIME_APPS}}; do
+          task deploy:app APP="$app"
+        done
+
+        # Mark deployment mode
+        kubectl create configmap dsrp-deployment-mode \
+          --from-literal=mode=realtime \
+          --from-literal=apps="{{.REALTIME_APPS}}" \
+          --dry-run=client -o yaml | kubectl apply -f -
+
+        echo ""
+        echo "✅ Real-time mode deployed!"
+        echo ""
+        echo "📋 Deployed components:"
+        for app in {{.REALTIME_APPS}}; do
+          echo "   - $app"
+        done
+
+      # Initialize Qdrant if not skipped
+      - |
+        if [ "{{.SKIP_INIT}}" != "true" ]; then
+          echo ""
+          echo "🔄 Initializing Qdrant collection..."
+          task qdrant:init || echo "⚠️  Qdrant init failed. Run 'task qdrant:init' manually."
+        else
+          echo ""
+          echo "ℹ️  Skipping Qdrant initialization. Run 'task qdrant:init' when ready."
+        fi
 
   deploy:app:
     desc: "Deploy a specific application"
@@ -471,14 +600,94 @@ tasks:
         echo "✅ $APP_NAME removed"
 
   destroy:all:
-    desc: "Remove all applications (keeps infrastructure)"
+    desc: "Remove all deployed applications (auto-detects deployment mode)"
     cmds:
-      - task: destroy:app
-        vars: { APP: airflow }
-      - task: destroy:app
-        vars: { APP: qdrant }
-      - task: destroy:app
-        vars: { APP: frontend }
+      - |
+        set -euo pipefail
+
+        echo "🔍 Detecting deployment mode..."
+        echo ""
+
+        # Check for deployment mode configmap
+        MODE=$(kubectl get configmap dsrp-deployment-mode -o jsonpath='{.data.mode}' 2>/dev/null || echo "")
+        DEPLOYED_APPS=$(kubectl get configmap dsrp-deployment-mode -o jsonpath='{.data.apps}' 2>/dev/null || echo "")
+
+        if [ -n "$MODE" ] && [ -n "$DEPLOYED_APPS" ]; then
+          echo "📋 Detected mode: $MODE"
+          echo "   Applications: $DEPLOYED_APPS"
+          echo ""
+
+          # Destroy apps in reverse order
+          APPS_REVERSED=$(echo "$DEPLOYED_APPS" | tr ' ' '\n' | tac | tr '\n' ' ')
+          for app in $APPS_REVERSED; do
+            task destroy:app APP="$app" || true
+          done
+
+          # Remove the deployment mode configmap
+          kubectl delete configmap dsrp-deployment-mode --ignore-not-found
+
+        else
+          echo "⚠️  No deployment mode detected. Scanning for deployed apps..."
+          echo ""
+
+          # Fallback: check which apps actually exist and destroy them
+          ALL_APPS="airflow grafana prometheus frontend backend model-serving qdrant"
+
+          for app in $ALL_APPS; do
+            # Check if app exists based on type
+            case "$app" in
+              airflow)
+                if helm status airflow -n airflow &>/dev/null; then
+                  echo "   Found: $app (helm)"
+                  task destroy:app APP="$app" || true
+                fi
+                ;;
+              *)
+                if kubectl get deployment "$app" &>/dev/null; then
+                  echo "   Found: $app (kubectl)"
+                  task destroy:app APP="$app" || true
+                fi
+                ;;
+            esac
+          done
+        fi
+
+        echo ""
+        echo "✅ Cleanup complete!"
+
+  destroy:batch:
+    desc: "Remove batch mode applications"
+    cmds:
+      - |
+        set -euo pipefail
+        echo "🗑️  Removing BATCH mode applications..."
+        echo ""
+
+        # Reverse order for proper cleanup
+        for app in airflow qdrant; do
+          task destroy:app APP="$app" || true
+        done
+
+        kubectl delete configmap dsrp-deployment-mode --ignore-not-found
+        echo ""
+        echo "✅ Batch mode removed!"
+
+  destroy:realtime:
+    desc: "Remove real-time mode applications"
+    cmds:
+      - |
+        set -euo pipefail
+        echo "🗑️  Removing REAL-TIME mode applications..."
+        echo ""
+
+        # Reverse order for proper cleanup (frontend first, then backend, etc.)
+        for app in grafana prometheus frontend backend model-serving qdrant; do
+          task destroy:app APP="$app" || true
+        done
+
+        kubectl delete configmap dsrp-deployment-mode --ignore-not-found
+        echo ""
+        echo "✅ Real-time mode removed!"
 
   destroy:infra:
     desc: "Destroy infrastructure (DANGER: destroys AKS cluster)"
@@ -497,6 +706,129 @@ tasks:
         fi
 
         terraform destroy -var-file={{.TFVARS_FILE}}
+
+  # ===========================================================================
+  # QDRANT INITIALIZATION
+  # ===========================================================================
+  qdrant:init:
+    desc: "Initialize Qdrant with IMDB movies collection"
+    summary: |
+      Runs a Kubernetes Job to populate Qdrant with movie data.
+
+      Prerequisites:
+        - Qdrant must be deployed and running
+        - Azure storage credentials must be configured
+
+      The job will:
+        1. Download movie data from Azure Blob Storage
+        2. Create the hybrid search collection (dense + BM25)
+        3. Generate embeddings and index all movies
+        4. Verify the index with test searches
+
+      Usage:
+        task qdrant:init                    # Run init job
+        task qdrant:init FORCE_REINDEX=true # Force re-index
+    vars:
+      FORCE_REINDEX: '{{.FORCE_REINDEX | default "true"}}'
+    cmds:
+      - |
+        set -euo pipefail
+
+        echo "🔄 Initializing Qdrant collection..."
+        echo ""
+
+        # Check if Qdrant is running
+        if ! kubectl get deployment qdrant &>/dev/null; then
+          echo "❌ Qdrant is not deployed. Run 'task deploy:app APP=qdrant' first."
+          exit 1
+        fi
+
+        # Wait for Qdrant to be ready
+        echo "⏳ Waiting for Qdrant to be ready..."
+        kubectl wait --for=condition=ready pod -l app=qdrant --timeout=120s
+
+        # Delete previous job if exists
+        kubectl delete job qdrant-init --ignore-not-found
+        echo ""
+
+        # Update force reindex setting
+        kubectl create configmap qdrant-init-config \
+          --from-literal=QDRANT_URL="http://qdrant:80" \
+          --from-literal=COLLECTION_NAME="imdb-movies-hybrid" \
+          --from-literal=EMBEDDING_MODEL="sentence-transformers/all-MiniLM-L6-v2" \
+          --from-literal=BATCH_SIZE="500" \
+          --from-literal=FORCE_REINDEX="{{.FORCE_REINDEX}}" \
+          --from-literal=AZURE_CONTAINER_NAME="ml-pipeline-data" \
+          --from-literal=BLOB_PATH="airflow-prod/complete_imdb_database.parquet" \
+          --dry-run=client -o yaml | kubectl apply -f -
+
+        # Apply the job
+        echo "📦 Starting Qdrant init job..."
+        kubectl apply -f k8s/qdrant-init-job.yaml
+
+        # Follow logs
+        echo ""
+        echo "📋 Job logs:"
+        echo "---"
+        kubectl wait --for=condition=ready pod -l app=qdrant-init --timeout=60s 2>/dev/null || true
+        kubectl logs -f job/qdrant-init || true
+
+        # Check job status
+        echo ""
+        echo "---"
+        JOB_STATUS=$(kubectl get job qdrant-init -o jsonpath='{.status.succeeded}' 2>/dev/null || echo "0")
+        if [ "$JOB_STATUS" = "1" ]; then
+          echo "✅ Qdrant initialization completed successfully!"
+        else
+          echo "❌ Qdrant initialization failed. Check logs above."
+          exit 1
+        fi
+
+  qdrant:status:
+    desc: "Check Qdrant collection status"
+    cmds:
+      - |
+        set -euo pipefail
+
+        echo "📊 Qdrant Collection Status"
+        echo "==========================="
+        echo ""
+
+        # Get Qdrant pod
+        QDRANT_POD=$(kubectl get pods -l app=qdrant -o jsonpath='{.items[0].metadata.name}' 2>/dev/null || echo "")
+
+        if [ -z "$QDRANT_POD" ]; then
+          echo "❌ Qdrant is not running"
+          exit 1
+        fi
+
+        # Get external IP
+        QDRANT_IP=$(kubectl get svc qdrant -o jsonpath='{.status.loadBalancer.ingress[0].ip}' 2>/dev/null || echo "")
+
+        echo "🔷 Pod: $QDRANT_POD"
+        if [ -n "$QDRANT_IP" ]; then
+          echo "🔷 External URL: http://$QDRANT_IP"
+          echo ""
+
+          # Get collections info
+          echo "🔷 Collections:"
+          curl -s "http://$QDRANT_IP/collections" | python3 -m json.tool 2>/dev/null || echo "   Could not fetch collections"
+        else
+          echo "🔷 External IP: Not assigned yet"
+          echo ""
+          echo "Use port-forward to access: kubectl port-forward svc/qdrant 6333:80"
+        fi
+
+  qdrant:init:logs:
+    desc: "Show Qdrant init job logs"
+    cmds:
+      - kubectl logs job/qdrant-init --tail=100 2>/dev/null || echo "No init job found"
+
+  qdrant:init:delete:
+    desc: "Delete Qdrant init job (to re-run)"
+    cmds:
+      - kubectl delete job qdrant-init --ignore-not-found
+      - echo "✅ Qdrant init job deleted. Run 'task qdrant:init' to re-initialize."
 
   # ===========================================================================
   # UTILITIES
@@ -579,11 +911,30 @@ tasks:
         echo "📦 Registered Applications"
         echo "=========================="
         echo ""
-        echo "Name       | Namespace | Type   | Service           | DNS Label"
-        echo "-----------|-----------|--------|-------------------|---------------"
+        echo "Name          | Namespace | Type   | Mode(s)           | Service"
+        echo "--------------|-----------|--------|-------------------|------------------"
         echo '{{.APPLICATIONS}}' | while IFS='|' read -r NAME NAMESPACE MANIFEST SERVICE DNS_LABEL TYPE; do
           [ -z "$NAME" ] && continue
-          printf "%-10s | %-9s | %-6s | %-17s | %s\n" "$NAME" "$NAMESPACE" "$TYPE" "$SERVICE" "$DNS_LABEL"
+
+          # Determine which mode(s) this app belongs to
+          MODES=""
+          if echo "{{.BATCH_APPS}}" | grep -qw "$NAME"; then
+            MODES="batch"
+          fi
+          if echo "{{.REALTIME_APPS}}" | grep -qw "$NAME"; then
+            if [ -n "$MODES" ]; then
+              MODES="$MODES,realtime"
+            else
+              MODES="realtime"
+            fi
+          fi
+          [ -z "$MODES" ] && MODES="-"
+
+          printf "%-13s | %-9s | %-6s | %-17s | %s\n" "$NAME" "$NAMESPACE" "$TYPE" "$MODES" "$SERVICE"
         done
+        echo ""
+        echo "Deployment Modes:"
+        echo "  task deploy:batch    -> {{.BATCH_APPS}}"
+        echo "  task deploy:realtime -> {{.REALTIME_APPS}}"
         echo ""
         echo "To add a new application, edit the APPLICATIONS variable in Taskfile.yml"

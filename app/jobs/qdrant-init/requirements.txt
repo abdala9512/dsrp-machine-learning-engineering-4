@@ -1,0 +1,6 @@
+# Qdrant Initialization Job Dependencies
+polars>=0.20.0
+qdrant-client>=1.7.0
+sentence-transformers>=2.2.0
+azure-storage-blob>=12.19.0
+loguru>=0.7.0

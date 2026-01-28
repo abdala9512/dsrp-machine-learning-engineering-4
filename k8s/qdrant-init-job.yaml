@@ -1,0 +1,67 @@
+# Qdrant Initialization Job
+# Populates Qdrant with IMDB movies for hybrid search
+#
+# Prerequisites:
+# 1. Qdrant must be running: kubectl get pods -l app=qdrant
+# 2. Azure storage credentials must be configured in the secret
+#
+# Usage:
+#   kubectl apply -f k8s/qdrant-init-job.yaml
+#   kubectl logs -f job/qdrant-init
+#
+# To re-run (force reindex):
+#   kubectl delete job qdrant-init --ignore-not-found
+#   kubectl apply -f k8s/qdrant-init-job.yaml
+---
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: qdrant-init-config
+  labels:
+    app: qdrant-init
+data:
+  QDRANT_URL: "http://qdrant:80"
+  COLLECTION_NAME: "imdb-movies-hybrid"
+  EMBEDDING_MODEL: "sentence-transformers/all-MiniLM-L6-v2"
+  BATCH_SIZE: "500"
+  FORCE_REINDEX: "true"
+  # Azure Blob Storage path
+  AZURE_CONTAINER_NAME: "ml-pipeline-data"
+  BLOB_PATH: "airflow-prod/complete_imdb_database.parquet"
+---
+apiVersion: batch/v1
+kind: Job
+metadata:
+  name: qdrant-init
+  labels:
+    app: qdrant-init
+    component: initialization
+spec:
+  # Keep job for debugging, clean up after 1 hour
+  ttlSecondsAfterFinished: 3600
+  backoffLimit: 3
+  template:
+    metadata:
+      labels:
+        app: qdrant-init
+    spec:
+      restartPolicy: OnFailure
+      containers:
+        - name: qdrant-init
+          image: ghcr.io/abdala9512/dsrp-qdrant-init:latest
+          imagePullPolicy: Always
+          envFrom:
+            - configMapRef:
+                name: qdrant-init-config
+            - secretRef:
+                name: azure-storage-credentials
+          resources:
+            requests:
+              cpu: 1000m
+              memory: 4Gi
+            limits:
+              cpu: 2000m
+              memory: 8Gi
+      # Uncomment if your GHCR image is private
+      # imagePullSecrets:
+      #   - name: ghcr-pull-secret
