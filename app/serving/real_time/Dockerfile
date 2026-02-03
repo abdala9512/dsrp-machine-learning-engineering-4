@@ -19,8 +19,9 @@ COPY *.py ./
 RUN uv venv && \
     uv pip install --no-cache -r pyproject.toml
 
-# Create data directory
+# Create data directory and copy data file
 RUN mkdir -p /app/data
+COPY complete_imdb_database.parquet /app/data/
 
 # Create prometheus multiproc directory
 RUN mkdir -p /tmp/prometheus_multiproc_dir

@@ -11,7 +11,7 @@ type: Opaque
 stringData:
   # IMPORTANT: Replace with your actual DagsHub token
   # Get your token at: https://dagshub.com/user/settings/tokens
-  DAGSHUB_USER_TOKEN: "your-dagshub-token-here"
+  DAGSHUB_USER_TOKEN: "5d7793d5c4048043122faeccdbd0aed884330030"
 ---
 apiVersion: v1
 kind: ConfigMap
@@ -106,13 +106,9 @@ spec:
             timeoutSeconds: 5
             failureThreshold: 3
           volumeMounts:
-            - name: data-volume
-              mountPath: /app/data
             - name: prometheus-multiproc
               mountPath: /tmp/prometheus_multiproc_dir
       volumes:
-        - name: data-volume
-          emptyDir: {}
         - name: prometheus-multiproc
           emptyDir: {}
       # Uncomment if your GHCR image is private
