@@ -30,6 +30,7 @@ export default function App() {
   const [results, setResults] = useState<SearchResult[]>([]);
   const [isSearching, setIsSearching] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const [useML, setUseML] = useState(true);
 
   const handleSearch = useCallback(
     async (text?: string) => {
@@ -41,7 +42,7 @@ export default function App() {
       setIsSearching(true);
       setError(null);
       try {
-        const response = await searchImdbTitles(nextQuery, 20);
+        const response = await searchImdbTitles(nextQuery, 20, useML);
         setResults(normalizeResults(response));
       } catch (err) {
         setError((err as Error).message);
@@ -50,7 +51,7 @@ export default function App() {
         setIsSearching(false);
       }
     },
-    [query]
+    [query, useML]
   );
 
   const onSubmit = (event: FormEvent<HTMLFormElement>) => {
@@ -88,6 +89,14 @@ export default function App() {
               value={query}
               onChange={(event) => setQuery(event.target.value)}
             />
+            <label className="ml-toggle">
+              <input
+                type="checkbox"
+                checked={useML}
+                onChange={(e) => setUseML(e.target.checked)}
+              />
+              <span>Use ML</span>
+            </label>
             <button type="submit" disabled={!query.trim() || isSearching}>
               {isSearching ? "Searching..." : "Search"}
             </button>

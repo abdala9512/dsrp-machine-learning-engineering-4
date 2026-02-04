@@ -289,6 +289,24 @@ main {
   letter-spacing: 0.05em;
 }
 
+.ml-toggle {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.5rem;
+  cursor: pointer;
+  font-size: 0.9rem;
+  font-weight: 500;
+  color: var(--accent-secondary);
+  user-select: none;
+}
+
+.ml-toggle input[type="checkbox"] {
+  width: 1.15rem;
+  height: 1.15rem;
+  accent-color: var(--accent-highlight);
+  cursor: pointer;
+}
+
 .error {
   color: #dc2626;
   margin-top: 0.75rem;

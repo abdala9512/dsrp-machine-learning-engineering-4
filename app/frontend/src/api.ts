@@ -306,7 +306,7 @@ interface BackendSearchResponse {
 /**
  * Search using the backend API (ML service + IMDB API)
  */
-async function searchViaBackend(query: string, limit = 20): Promise<ImdbTitle[]> {
+async function searchViaBackend(query: string, limit = 20, useML = true): Promise<ImdbTitle[]> {
   const backendUrl = resolveBackendUrl();
 
   const response = await fetch(`${backendUrl}/search`, {
@@ -318,7 +318,7 @@ async function searchViaBackend(query: string, limit = 20): Promise<ImdbTitle[]>
     body: JSON.stringify({
       query,
       limit,
-      use_ml: true,
+      use_ml: useML,
     }),
   });
 
@@ -392,12 +392,12 @@ async function searchImdbDirect(query: string, limit = 20): Promise<ImdbTitle[]>
  * - VITE_BACKEND_URL: Backend API URL (default: "http://localhost:8080")
  * - VITE_IMDB_API_BASE_URL: IMDB API URL (default: "https://api.imdbapi.dev")
  */
-export async function searchImdbTitles(query: string, limit = 20): Promise<ImdbTitle[]> {
+export async function searchImdbTitles(query: string, limit = 20, useML = true): Promise<ImdbTitle[]> {
   const mode = getApiMode();
 
   if (mode === "backend") {
     try {
-      return await searchViaBackend(query, limit);
+      return await searchViaBackend(query, limit, useML);
     } catch (error) {
       console.warn("Backend search failed, falling back to direct IMDB:", error);
       // Fallback to direct IMDB search if backend fails

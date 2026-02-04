@@ -1,87 +1,87 @@
-# Local Development Guide
+# Guía de Desarrollo Local
 
-This guide explains how to run the complete DSRP Movie Recommendations platform locally for development and testing.
+Esta guía explica cómo ejecutar la plataforma completa de Recomendaciones de Películas DSRP localmente para desarrollo y pruebas.
 
-## Table of Contents
+## Tabla de Contenidos
 
-1. [Architecture Overview](#architecture-overview)
-2. [Prerequisites](#prerequisites)
-3. [One-Time Setup](#one-time-setup)
-4. [Quick Start](#quick-start)
-5. [Detailed Setup](#detailed-setup)
-6. [Monitoring & Dashboards](#monitoring--dashboards)
-7. [Troubleshooting](#troubleshooting)
+1. [Arquitectura General](#arquitectura-general)
+2. [Requisitos Previos](#requisitos-previos)
+3. [Configuración Inicial](#configuración-inicial)
+4. [Inicio Rápido](#inicio-rápido)
+5. [Configuración Detallada](#configuración-detallada)
+6. [Monitoreo y Dashboards](#monitoreo--dashboards)
+7. [Solución de Problemas](#solución-de-problemas)
 
 ---
 
-## Architecture Overview
+## Arquitectura General
 
 ```
 ┌─────────────────────────────────────────────────────────────────┐
 │                     Frontend (React + Vite)                      │
-│                        Port 5173                                 │
+│                        Puerto 5173                               │
 │              http://localhost:5173                               │
 └──────────────────────────┬──────────────────────────────────────┘
                            │ /search, /health, /movie
                            ▼
 ┌─────────────────────────────────────────────────────────────────┐
 │                     Backend API (FastAPI)                        │
-│                        Port 8080                                 │
+│                        Puerto 8080                               │
 │              http://localhost:8080                               │
 │                                                                  │
-│  • Orchestrates ML Service + IMDB API                           │
-│  • Prometheus metrics at /metrics                                │
+│  • Orquesta Servicio ML + API IMDB                              │
+│  • Métricas Prometheus en /metrics                               │
 └──────────────────────────┬──────────────────────────────────────┘
                            │
           ┌────────────────┼────────────────┐
           ▼                                 ▼
 ┌─────────────────────┐         ┌─────────────────────┐
-│   ML Service API    │         │     IMDB API        │
-│     Port 8000       │         │   (External)        │
+│   Servicio ML API   │         │     API IMDB        │
+│     Puerto 8000     │         │   (Externo)         │
 │                     │         │                     │
-│ • LightGBM LTR      │         │ • Movie details     │
-│ • Embeddings        │         │ • Poster images     │
-│ • Qdrant search     │         │                     │
-│ • nDCG metrics      │         │                     │
-│ • Feature drift     │         │                     │
+│ • LightGBM LTR      │         │ • Detalles películas│
+│ • Embeddings        │         │ • Imágenes pósters  │
+│ • Búsqueda Qdrant   │         │                     │
+│ • Métricas nDCG     │         │                     │
+│ • Drift de features │         │                     │
 └─────────┬───────────┘         └─────────────────────┘
           │
           ▼
 ┌─────────────────────┐         ┌─────────────────────┐
-│   Qdrant (Vector)   │         │   MLflow (DagsHub)  │
-│     Port 6333       │         │     (Remote)        │
+│   Qdrant (Vectores) │         │   MLflow (DagsHub)  │
+│     Puerto 6333     │         │     (Remoto)        │
 │                     │         │                     │
-│ • Dense embeddings  │         │ • Model registry    │
-│ • BM25 sparse       │         │ • Experiment logs   │
-│ • Hybrid search     │         │                     │
+│ • Embeddings densos │         │ • Registro modelos  │
+│ • BM25 disperso     │         │ • Logs experimentos │
+│ • Búsqueda híbrida  │         │                     │
 └─────────────────────┘         └─────────────────────┘
 ```
 
-### Components
+### Componentes
 
-| Component | Port | Description |
+| Componente | Puerto | Descripción |
 |-----------|------|-------------|
-| **Frontend** | 5173 | React application for search UI |
-| **Backend** | 8080 | API orchestration layer |
-| **ML Service** | 8000 | LightGBM LTR model + embeddings |
-| **Qdrant** | 6333 | Vector database for hybrid search |
-| **Prometheus** | 9090 | Metrics collection |
-| **Grafana** | 3000 | Monitoring dashboards |
+| **Frontend** | 5173 | Aplicación React para la interfaz de búsqueda |
+| **Backend** | 8080 | Capa de orquestación de API |
+| **Servicio ML** | 8000 | Modelo LightGBM LTR + embeddings |
+| **Qdrant** | 6333 | Base de datos vectorial para búsqueda híbrida |
+| **Prometheus** | 9090 | Recolección de métricas |
+| **Grafana** | 3000 | Dashboards de monitoreo |
 
 ---
 
-## Prerequisites
+## Requisitos Previos
 
-### Required Software
+### Software Requerido
 
-| Software | Version | Installation |
+| Software | Versión | Instalación |
 |----------|---------|--------------|
 | **Docker** | 20.10+ | [docker.com](https://docs.docker.com/get-docker/) |
 | **uv** | 0.1+ | `curl -LsSf https://astral.sh/uv/install.sh \| sh` |
 | **Node.js** | 18+ | [nodejs.org](https://nodejs.org/) |
-| **Task** | 3.0+ | `brew install go-task` or [taskfile.dev](https://taskfile.dev/installation/) |
+| **Task** | 3.0+ | `brew install go-task` o [taskfile.dev](https://taskfile.dev/installation/) |
 
-### Verify Installation
+### Verificar Instalación
 
 ```bash
 docker --version      # Docker version 20.10+
@@ -92,80 +92,80 @@ task --version        # Task version 3+
 
 ---
 
-## One-Time Setup
+## Configuración Inicial
 
-### 1. Clone the Repository
+### 1. Clonar el Repositorio
 
 ```bash
 git clone https://github.com/abdala9512/dsrp-machine-learning-engineering-4.git
 cd dsrp-machine-learning-engineering-4
 ```
 
-### 2. Configure DagsHub/MLflow Access
+### 2. Configurar Acceso a DagsHub/MLflow
 
-The ML Service loads the trained LightGBM model from MLflow (hosted on DagsHub). You need a DagsHub token to access the model registry.
+El Servicio ML carga el modelo LightGBM entrenado desde MLflow (alojado en DagsHub). Necesitas un token de DagsHub para acceder al registro de modelos.
 
-1. **Get your DagsHub token**:
-   - Go to [DagsHub](https://dagshub.com/user/settings/tokens)
-   - Create a new token with read access
+1. **Obtén tu token de DagsHub**:
+   - Ve a [DagsHub](https://dagshub.com/user/settings/tokens)
+   - Crea un nuevo token con acceso de lectura
 
-2. **Configure the environment**:
+2. **Configura el entorno**:
    ```bash
    cd app/serving/real_time
-   cp mlapi.env.example mlapi.env  # If example exists, otherwise edit mlapi.env
+   cp mlapi.env.example mlapi.env  # Si el ejemplo existe, sino edita mlapi.env
    ```
 
-3. **Edit `mlapi.env`** with your token:
+3. **Edita `mlapi.env`** con tu token:
    ```env
-   # DagsHub Authentication (REQUIRED)
-   DAGSHUB_USER_TOKEN=your_token_here
+   # Autenticación DagsHub (REQUERIDO)
+   DAGSHUB_USER_TOKEN=tu_token_aqui
    DAGSHUB_REPO_OWNER=abdala9512
    DAGSHUB_REPO_NAME=dsrp-machine-learning-engineering-4
 
-   # MLflow Model (these are the defaults)
+   # Modelo MLflow (estos son los valores por defecto)
    LTR_MODEL_NAME=ltr-dsrpflix-prd-ENE12
    LTR_MODEL_ALIAS=champion
 
-   # Local Qdrant (will be set by Taskfile)
+   # Qdrant local (será configurado por Taskfile)
    QDRANT_URL=http://localhost:6333
    QDRANT_COLLECTION=imdb-movies-hybrid
    ```
 
-### 3. Prepare the Movie Database
+### 3. Preparar la Base de Datos de Películas
 
-The system requires the IMDB movie database in parquet format. There are two options:
+El sistema requiere la base de datos de películas IMDB en formato parquet. Hay dos opciones:
 
-**Option A: Use existing data (recommended)**
+**Opción A: Usar datos existentes (recomendado)**
 
-If you have access to the notebooks data:
+Si tienes acceso a los datos de los notebooks:
 ```bash
-# The Taskfile will automatically find data in:
+# El Taskfile encontrará automáticamente los datos en:
 # - app/serving/real_time/complete_imdb_database.parquet
 # - notebooks/data/complete_imdb_database.parquet
 ```
 
-**Option B: Generate from scratch**
+**Opción B: Generar desde cero**
 
-Run the data collection notebook:
+Ejecuta el notebook de recolección de datos:
 ```bash
 cd notebooks
 uv sync
 uv run jupyter lab
-# Open and run: data_collection.ipynb
+# Abre y ejecuta: data_collection.ipynb
 ```
 
-This requires an OMDB API key in `notebooks/.env`:
+Esto requiere una clave de API de OMDB en `notebooks/.env`:
 ```env
-OMDB_API_KEY=your_omdb_api_key
+OMDB_API_KEY=tu_clave_api_omdb
 ```
 
-### 4. Install Dependencies
+### 4. Instalar Dependencias
 
 ```bash
-# From repository root
+# Desde la raíz del repositorio
 task local:deps:install
 
-# Or manually:
+# O manualmente:
 cd app/serving/real_time && uv sync
 cd ../backend && uv sync
 cd ../frontend && npm install
@@ -173,171 +173,171 @@ cd ../frontend && npm install
 
 ---
 
-## Quick Start
+## Inicio Rápido
 
-Once the one-time setup is complete, you can start the entire stack with:
+Una vez completada la configuración inicial, puedes iniciar toda la pila con:
 
 ```bash
-# Terminal 1: Start infrastructure (Qdrant + monitoring)
+# Terminal 1: Iniciar infraestructura (Qdrant + monitoreo)
 task local:start:all
 
-# Terminal 2: Start ML Service
+# Terminal 2: Iniciar Servicio ML
 task local:api:start
 
-# Terminal 3: Start Backend
+# Terminal 3: Iniciar Backend
 task local:backend:start
 
-# Terminal 4: Start Frontend
+# Terminal 4: Iniciar Frontend
 task local:frontend:start
 ```
 
-**Access the application:**
+**Acceder a la aplicación:**
 
-| Service | URL |
+| Servicio | URL |
 |---------|-----|
 | Frontend | http://localhost:5173 |
 | Backend API | http://localhost:8080 |
-| Backend Docs | http://localhost:8080/docs |
-| ML Service API | http://localhost:8000 |
-| ML Service Docs | http://localhost:8000/docs |
-| Qdrant Dashboard | http://localhost:6333/dashboard |
+| Docs del Backend | http://localhost:8080/docs |
+| Servicio ML API | http://localhost:8000 |
+| Docs del Servicio ML | http://localhost:8000/docs |
+| Dashboard Qdrant | http://localhost:6333/dashboard |
 | Prometheus | http://localhost:9090 |
 | Grafana | http://localhost:3000 (admin/admin) |
 
 ---
 
-## Detailed Setup
+## Configuración Detallada
 
-### ML Pipeline Dependencies
+### Dependencias del Pipeline ML
 
-The ML Service depends on several upstream components that must be set up before the service can work properly.
+El Servicio ML depende de varios componentes que deben configurarse antes de que el servicio funcione correctamente.
 
-#### 1. Model Training (MLflow)
+#### 1. Entrenamiento del Modelo (MLflow)
 
-The LightGBM LTR model must be trained and registered in MLflow before the service can load it.
+El modelo LightGBM LTR debe ser entrenado y registrado en MLflow antes de que el servicio pueda cargarlo.
 
-**Training Pipeline:**
+**Pipeline de Entrenamiento:**
 
 ```
-notebooks/data_collection.ipynb     → IMDB data
+notebooks/data_collection.ipynb     → Datos IMDB
          ↓
-notebooks/feature_engineering.ipynb → Feature extraction
+notebooks/feature_engineering.ipynb → Extracción de features
          ↓
-notebooks/synthetic_queries.ipynb   → LTR training data
+notebooks/synthetic_queries.ipynb   → Datos de entrenamiento LTR
          ↓
-notebooks/modeling.ipynb            → Train & register model
+notebooks/modeling.ipynb            → Entrenar y registrar modelo
 ```
 
-**To train the model:**
+**Para entrenar el modelo:**
 
 ```bash
 cd notebooks
 uv sync
 
-# Install Jupyter
+# Instalar Jupyter
 uv run pip install jupyterlab
 
-# Start JupyterLab
+# Iniciar JupyterLab
 uv run jupyter lab
 ```
 
-Run the notebooks in order:
+Ejecuta los notebooks en orden:
 
-1. **`data_collection.ipynb`**: Downloads IMDB datasets and enriches with OMDB API
-   - Output: `data/complete_imdb_database.parquet`
-   - Requires: `OMDB_API_KEY` in `.env`
+1. **`data_collection.ipynb`**: Descarga datasets de IMDB y enriquece con la API de OMDB
+   - Salida: `data/complete_imdb_database.parquet`
+   - Requiere: `OMDB_API_KEY` en `.env`
 
-2. **`feature_engineering.ipynb`**: Creates embeddings and features
-   - Output: Feature-enriched parquet files
-   - Uses: `sentence-transformers/all-MiniLM-L6-v2`
+2. **`feature_engineering.ipynb`**: Crea embeddings y features
+   - Salida: Archivos parquet enriquecidos con features
+   - Usa: `sentence-transformers/all-MiniLM-L6-v2`
 
-3. **`synthetic_queries.ipynb`**: Generates LTR training data
-   - Output: `data/ltr_synthetic_dataset.parquet`
-   - Creates synthetic query-document pairs with relevance labels
+3. **`synthetic_queries.ipynb`**: Genera datos de entrenamiento LTR
+   - Salida: `data/ltr_synthetic_dataset.parquet`
+   - Crea pares sintéticos consulta-documento con etiquetas de relevancia
 
-4. **`modeling.ipynb`**: Trains LightGBM LTR model
-   - Output: Model registered in MLflow as `ltr-dsrpflix-prd-ENE12`
-   - Promotes best model to `@champion` alias
-   - Logs nDCG@k metrics
+4. **`modeling.ipynb`**: Entrena modelo LightGBM LTR
+   - Salida: Modelo registrado en MLflow como `ltr-dsrpflix-prd-ENE12`
+   - Promueve el mejor modelo al alias `@champion`
+   - Registra métricas nDCG@k
 
-**Model Configuration:**
+**Configuración del Modelo:**
 
 ```python
-# Model features (from config.py)
+# Features del modelo (de config.py)
 feature_cols = ["sim_embedding", "imdb_rating", "imdb_votes_log"]
 
-# Model URI
+# URI del modelo
 model_uri = "models:/ltr-dsrpflix-prd-ENE12@champion"
 ```
 
-#### 2. Qdrant Initialization
+#### 2. Inicialización de Qdrant
 
-After starting Qdrant, initialize it with movie embeddings:
+Después de iniciar Qdrant, inicialízalo con los embeddings de películas:
 
 ```bash
-# Start Qdrant container
+# Iniciar contenedor de Qdrant
 task local:qdrant:start
 
-# Initialize with movie data (creates collection + indexes)
+# Inicializar con datos de películas (crea colección + índices)
 task local:qdrant:init
 
-# Verify initialization
+# Verificar inicialización
 task local:qdrant:status
 ```
 
-**What the initialization does:**
+**Qué hace la inicialización:**
 
-1. Creates collection `imdb-movies-hybrid` with:
-   - Dense vectors (384-dim sentence-transformer embeddings)
-   - Sparse vectors (BM25-like for keyword search)
+1. Crea la colección `imdb-movies-hybrid` con:
+   - Vectores densos (embeddings de sentence-transformer de 384 dimensiones)
+   - Vectores dispersos (tipo BM25 para búsqueda por palabras clave)
 
-2. Indexes all movies (~47K) with:
-   - Full text embeddings
-   - Sparse token indices
+2. Indexa todas las películas (~47K) con:
+   - Embeddings de texto completo
+   - Índices de tokens dispersos
 
-3. Verifies with a test search
+3. Verifica con una búsqueda de prueba
 
-**Force re-index:**
+**Forzar re-indexación:**
 ```bash
 task local:qdrant:init FORCE_REINDEX=true
 ```
 
-### Service Startup Order
+### Orden de Inicio de Servicios
 
-For proper operation, start services in this order:
+Para un funcionamiento correcto, inicia los servicios en este orden:
 
 ```bash
-# 1. Infrastructure (Qdrant must be ready before ML Service)
+# 1. Infraestructura (Qdrant debe estar listo antes del Servicio ML)
 task local:qdrant:start
-task local:qdrant:init       # First time only
-task local:monitoring:start  # Optional, for dashboards
+task local:qdrant:init       # Solo la primera vez
+task local:monitoring:start  # Opcional, para dashboards
 
-# 2. ML Service (must be ready before Backend)
+# 2. Servicio ML (debe estar listo antes del Backend)
 task local:api:start
 
-# 3. Backend (depends on ML Service)
+# 3. Backend (depende del Servicio ML)
 task local:backend:start
 
-# 4. Frontend (depends on Backend)
+# 4. Frontend (depende del Backend)
 task local:frontend:start
 ```
 
-### Configuration Reference
+### Referencia de Configuración
 
-#### ML Service (`app/serving/real_time/mlapi.env`)
+#### Servicio ML (`app/serving/real_time/mlapi.env`)
 
 ```env
-# Server
+# Servidor
 HOST=0.0.0.0
 PORT=8000
 WORKERS=1
 
-# DagsHub/MLflow (REQUIRED)
-DAGSHUB_USER_TOKEN=your_token_here
+# DagsHub/MLflow (REQUERIDO)
+DAGSHUB_USER_TOKEN=tu_token_aqui
 DAGSHUB_REPO_OWNER=abdala9512
 DAGSHUB_REPO_NAME=dsrp-machine-learning-engineering-4
 
-# Model
+# Modelo
 LTR_MODEL_NAME=ltr-dsrpflix-prd-ENE12
 LTR_MODEL_ALIAS=champion
 
@@ -349,14 +349,14 @@ QDRANT_URL=http://localhost:6333
 QDRANT_COLLECTION=imdb-movies-hybrid
 MOCK_QDRANT=false
 
-# Search
+# Búsqueda
 TOP_K_RETRIEVAL=100
 TOP_K_FINAL=10
 ```
 
 #### Backend (`app/backend/`)
 
-Environment variables (set by Taskfile):
+Variables de entorno (configuradas por Taskfile):
 ```env
 ML_SERVICE_URL=http://localhost:8000
 HOST=0.0.0.0
@@ -367,7 +367,7 @@ CORS_ORIGINS=*
 
 #### Frontend (`app/frontend/vite.config.ts`)
 
-Proxies requests to backend:
+Redirige peticiones al backend:
 ```typescript
 proxy: {
   "/search": "http://localhost:8080",
@@ -378,97 +378,97 @@ proxy: {
 
 ---
 
-## Monitoring & Dashboards
+## Monitoreo y Dashboards
 
-### Grafana Dashboards
+### Dashboards de Grafana
 
-Access Grafana at http://localhost:3000 (admin/admin)
+Accede a Grafana en http://localhost:3000 (admin/admin)
 
-| Dashboard | URL | Metrics |
+| Dashboard | URL | Métricas |
 |-----------|-----|---------|
-| **ML Service** | `/d/movie-api-dashboard` | nDCG, feature distributions, LTR scores, pipeline latencies |
-| **Backend** | `/d/backend-dashboard` | Request rates, ML/IMDB latencies, error rates |
+| **Servicio ML** | `/d/movie-api-dashboard` | nDCG, distribuciones de features, scores LTR, latencias del pipeline |
+| **Backend** | `/d/backend-dashboard` | Tasas de peticiones, latencias ML/IMDB, tasas de error |
 
-### ML Service Metrics
+### Métricas del Servicio ML
 
-The ML Service exposes these Prometheus metrics at `/metrics`:
+El Servicio ML expone estas métricas de Prometheus en `/metrics`:
 
-**Quality Metrics:**
-- `movie_api_ndcg_score` - Simulated nDCG@k per request
-- `movie_api_ndcg_at_k` - nDCG distribution histogram
+**Métricas de Calidad:**
+- `movie_api_ndcg_score` - nDCG@k simulado por petición
+- `movie_api_ndcg_at_k` - Histograma de distribución de nDCG
 
-**Feature Drift:**
-- `movie_api_feature_sim_embedding` - Cosine similarity distribution
-- `movie_api_feature_imdb_rating` - Rating distribution
-- `movie_api_feature_imdb_votes_log` - Vote count distribution
-- `movie_api_ltr_score` - LTR model output distribution
+**Drift de Features:**
+- `movie_api_feature_sim_embedding` - Distribución de similitud coseno
+- `movie_api_feature_imdb_rating` - Distribución de ratings
+- `movie_api_feature_imdb_votes_log` - Distribución de cantidad de votos
+- `movie_api_ltr_score` - Distribución de salida del modelo LTR
 
-**Latencies:**
-- `movie_api_request_latency_seconds` - Total request latency
-- `movie_api_embedding_latency_seconds` - Embedding generation
-- `movie_api_retrieval_latency_seconds` - Qdrant search
-- `movie_api_rerank_latency_seconds` - LTR re-ranking
+**Latencias:**
+- `movie_api_request_latency_seconds` - Latencia total de petición
+- `movie_api_embedding_latency_seconds` - Generación de embeddings
+- `movie_api_retrieval_latency_seconds` - Búsqueda en Qdrant
+- `movie_api_rerank_latency_seconds` - Re-ranking LTR
 
-### Backend Metrics
+### Métricas del Backend
 
-Available at http://localhost:8080/metrics:
+Disponibles en http://localhost:8080/metrics:
 
-- `backend_requests_total` - Request count by endpoint/status/source
-- `backend_request_latency_seconds` - Overall latency
-- `backend_ml_service_latency_seconds` - ML service call latency
-- `backend_imdb_api_latency_seconds` - IMDB API call latency
+- `backend_requests_total` - Conteo de peticiones por endpoint/estado/fuente
+- `backend_request_latency_seconds` - Latencia general
+- `backend_ml_service_latency_seconds` - Latencia de llamadas al servicio ML
+- `backend_imdb_api_latency_seconds` - Latencia de llamadas a la API IMDB
 
 ---
 
-## Task Reference
+## Referencia de Tareas
 
-All tasks are available from the repository root with the `local:` prefix:
+Todas las tareas están disponibles desde la raíz del repositorio con el prefijo `local:`:
 
 ```bash
-# Infrastructure
-task local:start:all          # Start Qdrant + init + monitoring
-task local:stop:all           # Stop all services
-task local:status             # Check status of all services
+# Infraestructura
+task local:start:all          # Iniciar Qdrant + init + monitoreo
+task local:stop:all           # Detener todos los servicios
+task local:status             # Verificar estado de todos los servicios
 
 # Qdrant
-task local:qdrant:start       # Start Qdrant container
-task local:qdrant:stop        # Stop Qdrant
-task local:qdrant:init        # Initialize with movie data
-task local:qdrant:status      # Check collection status
-task local:qdrant:destroy     # Remove container and data
+task local:qdrant:start       # Iniciar contenedor de Qdrant
+task local:qdrant:stop        # Detener Qdrant
+task local:qdrant:init        # Inicializar con datos de películas
+task local:qdrant:status      # Verificar estado de la colección
+task local:qdrant:destroy     # Eliminar contenedor y datos
 
-# ML Service (Port 8000)
-task local:api:start          # Start ML service
-task local:api:stop           # Stop ML service
-task local:api:test           # Test with sample query
+# Servicio ML (Puerto 8000)
+task local:api:start          # Iniciar servicio ML
+task local:api:stop           # Detener servicio ML
+task local:api:test           # Probar con consulta de ejemplo
 
-# Backend (Port 8080)
-task local:backend:start      # Start backend
-task local:backend:stop       # Stop backend
-task local:backend:test       # Test backend API
+# Backend (Puerto 8080)
+task local:backend:start      # Iniciar backend
+task local:backend:stop       # Detener backend
+task local:backend:test       # Probar API del backend
 
-# Frontend (Port 5173)
-task local:frontend:start     # Start dev server
-task local:frontend:stop      # Stop frontend
-task local:frontend:build     # Build for production
+# Frontend (Puerto 5173)
+task local:frontend:start     # Iniciar servidor de desarrollo
+task local:frontend:stop      # Detener frontend
+task local:frontend:build     # Compilar para producción
 
-# Monitoring
-task local:monitoring:start   # Start Prometheus + Grafana
-task local:monitoring:stop    # Stop monitoring
-task local:monitoring:logs    # View logs
+# Monitoreo
+task local:monitoring:start   # Iniciar Prometheus + Grafana
+task local:monitoring:stop    # Detener monitoreo
+task local:monitoring:logs    # Ver logs
 
-# Development
-task local:dev                # Start API with mock data (no Qdrant)
-task local:deps:check         # Check dependencies
-task local:deps:install       # Install all dependencies
-task local:load-test:api      # Run load test
+# Desarrollo
+task local:dev                # Iniciar API con datos mock (sin Qdrant)
+task local:deps:check         # Verificar dependencias
+task local:deps:install       # Instalar todas las dependencias
+task local:load-test:api      # Ejecutar prueba de carga
 ```
 
 ---
 
-## Troubleshooting
+## Solución de Problemas
 
-### Common Issues
+### Problemas Comunes
 
 #### 1. "DAGSHUB_USER_TOKEN not set"
 
@@ -476,7 +476,7 @@ task local:load-test:api      # Run load test
 Error: DAGSHUB_USER_TOKEN environment variable is required
 ```
 
-**Solution:** Edit `app/serving/real_time/mlapi.env` with your DagsHub token.
+**Solución:** Edita `app/serving/real_time/mlapi.env` con tu token de DagsHub.
 
 #### 2. "Model not found in MLflow"
 
@@ -484,10 +484,10 @@ Error: DAGSHUB_USER_TOKEN environment variable is required
 mlflow.exceptions.MlflowException: Could not find a registered model with name
 ```
 
-**Solution:**
-1. Verify model exists: Check https://dagshub.com/abdala9512/dsrp-machine-learning-engineering-4.mlflow
-2. Run the training notebook: `notebooks/modeling.ipynb`
-3. Ensure model has `@champion` alias
+**Solución:**
+1. Verifica que el modelo existe: Revisa https://dagshub.com/abdala9512/dsrp-machine-learning-engineering-4.mlflow
+2. Ejecuta el notebook de entrenamiento: `notebooks/modeling.ipynb`
+3. Asegúrate de que el modelo tenga el alias `@champion`
 
 #### 3. "Qdrant connection refused"
 
@@ -495,15 +495,15 @@ mlflow.exceptions.MlflowException: Could not find a registered model with name
 qdrant_client.http.exceptions.ResponseHandlingException: Connection refused
 ```
 
-**Solution:**
+**Solución:**
 ```bash
 task local:qdrant:start
 task local:qdrant:status
 ```
 
-#### 4. "Collection not found" or "Empty results"
+#### 4. "Collection not found" o "Resultados vacíos"
 
-**Solution:**
+**Solución:**
 ```bash
 task local:qdrant:init FORCE_REINDEX=true
 ```
@@ -514,100 +514,100 @@ task local:qdrant:init FORCE_REINDEX=true
 FileNotFoundError: Movies database not found
 ```
 
-**Solution:**
-1. Run `notebooks/data_collection.ipynb` to generate data
-2. Or copy existing parquet to `app/serving/real_time/complete_imdb_database.parquet`
+**Solución:**
+1. Ejecuta `notebooks/data_collection.ipynb` para generar los datos
+2. O copia el parquet existente a `app/serving/real_time/complete_imdb_database.parquet`
 
-#### 6. Frontend can't connect to backend
+#### 6. El frontend no puede conectarse al backend
 
-**Solution:** Ensure backend is running on port 8080:
+**Solución:** Asegúrate de que el backend esté corriendo en el puerto 8080:
 ```bash
 task local:backend:start
 curl http://localhost:8080/health
 ```
 
-### Development Mode (No Qdrant)
+### Modo de Desarrollo (Sin Qdrant)
 
-For quick development without Qdrant:
+Para desarrollo rápido sin Qdrant:
 
 ```bash
 task local:dev
-# or
+# o
 task local:api:start MOCK_QDRANT=true
 ```
 
-This uses a mock retriever that returns random movies (useful for UI development).
+Esto usa un retriever mock que retorna películas aleatorias (útil para desarrollo de UI).
 
 ### Logs
 
 ```bash
-# View Qdrant logs
+# Ver logs de Qdrant
 task local:qdrant:logs
 
-# View monitoring logs
+# Ver logs de monitoreo
 task local:monitoring:logs
 
-# Check service status
+# Verificar estado de servicios
 task local:status
 ```
 
-### Reset Everything
+### Reiniciar Todo
 
 ```bash
-# Stop all services
+# Detener todos los servicios
 task local:stop:all
 
-# Destroy Qdrant data
+# Destruir datos de Qdrant
 task local:qdrant:destroy
 
-# Clean generated files
+# Limpiar archivos generados
 task local:clean
 
-# Fresh start
+# Inicio limpio
 task local:start:all
 ```
 
 ---
 
-## Development Workflow
+## Flujo de Trabajo de Desarrollo
 
-### Typical Development Session
+### Sesión de Desarrollo Típica
 
 ```bash
-# 1. Start infrastructure (once per session)
+# 1. Iniciar infraestructura (una vez por sesión)
 task local:start:all
 
-# 2. Start services in separate terminals
+# 2. Iniciar servicios en terminales separadas
 task local:api:start       # Terminal 2
 task local:backend:start   # Terminal 3
 task local:frontend:start  # Terminal 4
 
-# 3. Make changes to code
-# Services auto-reload on file changes
+# 3. Hacer cambios en el código
+# Los servicios se recargan automáticamente al detectar cambios
 
-# 4. Test
-task local:api:test        # Test ML service
-task local:backend:test    # Test backend
+# 4. Probar
+task local:api:test        # Probar servicio ML
+task local:backend:test    # Probar backend
 
-# 5. Check metrics
+# 5. Revisar métricas
 open http://localhost:3000  # Grafana
 ```
 
-### Running Tests
+### Ejecutar Pruebas
 
 ```bash
 cd app/serving/real_time
-task local:test            # Run pytest
+task local:test            # Ejecutar pytest
 
-# Load testing
+# Pruebas de carga
 task local:load-test:api REQUESTS=100 CONCURRENCY=10
 ```
 
 ---
 
-## Additional Resources
+## Recursos Adicionales
 
-- **MLflow Dashboard**: https://dagshub.com/abdala9512/dsrp-machine-learning-engineering-4.mlflow
-- **Repository**: https://github.com/abdala9512/dsrp-machine-learning-engineering-4
-- **Qdrant Docs**: https://qdrant.tech/documentation/
+- **Dashboard MLflow**: https://dagshub.com/abdala9512/dsrp-machine-learning-engineering-4.mlflow
+- **Repositorio**: https://github.com/abdala9512/dsrp-machine-learning-engineering-4
+- **Documentación Qdrant**: https://qdrant.tech/documentation/
 - **LightGBM Ranker**: https://lightgbm.readthedocs.io/en/latest/pythonapi/lightgbm.LGBMRanker.html
