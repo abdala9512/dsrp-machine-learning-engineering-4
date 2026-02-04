@@ -1,12 +1,16 @@
 apiVersion: 1
 
 providers:
-  - name: "Movie API Dashboards"
+  - name: "DSRP Movie Recommendations"
     orgId: 1
-    folder: ""
-    folderUid: ""
+    folder: "DSRP"
+    folderUid: "dsrp-folder"
     type: file
     disableDeletion: false
     editable: true
+    updateIntervalSeconds: 10
     options:
       path: /etc/grafana/provisioning/dashboards
+      # This will load all JSON dashboard files in the directory:
+      # - movie-api.json (ML Service Dashboard)
+      # - backend-api.json (Backend API Dashboard)

@@ -5,13 +5,22 @@ version: '3'
 # =============================================================================
 # This Taskfile orchestrates the entire deployment of the MLOps platform.
 #
-# Deployment Modes:
+# LOCAL DEVELOPMENT (task local:*):
+#   task local:start:all         # Start local stack (Qdrant, monitoring)
+#   task local:api:start         # Start ML Service (port 8000)
+#   task local:backend:start     # Start Backend API (port 8080)
+#   task local:frontend:start    # Start Frontend (port 5173)
+#   task local:status            # Check status of local services
+#   task local:stop:all          # Stop all local services
+#
+# KUBERNETES DEPLOYMENT:
 #   task deploy:batch            # Batch mode: Airflow + Qdrant (no frontend)
 #   task deploy:realtime         # Real-time: APIs, ML serving, frontend, monitoring
 #   task deploy:all              # Deploy everything (all components)
 #
 # Qdrant Initialization:
-#   task qdrant:init             # Populate Qdrant with movie data
+#   task qdrant:init             # Populate Qdrant with movie data (K8s)
+#   task local:qdrant:init       # Populate Qdrant with movie data (local)
 #   task qdrant:status           # Check collection status
 #   task qdrant:init:delete      # Delete init job (to re-run)
 #
@@ -70,6 +79,9 @@ includes:
   k8s:
     taskfile: ./k8s/Taskfile.yml
     dir: ./k8s
+  local:
+    taskfile: ./app/serving/real_time/Taskfile.yml
+    dir: ./app/serving/real_time
 
 tasks:
   # ===========================================================================

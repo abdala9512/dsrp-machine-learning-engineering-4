@@ -1,4 +1,4 @@
 resource_group_name  = "rg-terraform-state-dsrp4"
-storage_account_name = "tfstatedsrp44c3e230c"
+storage_account_name = "tfstatedsrp416d25059"
 container_name       = "tfstate"
 key                  = "mlops-dsrp4.terraform.tfstate"

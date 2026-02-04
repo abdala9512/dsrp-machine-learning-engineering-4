@@ -1,0 +1,747 @@
+version: '3'
+
+# =============================================================================
+# DSRP Movie Recommendations - Local Development Taskfile
+# =============================================================================
+# This Taskfile helps you run the complete application stack locally:
+#   - Qdrant (vector database)
+#   - ML Serving API (LightGBM LTR + embeddings) - Port 8000
+#   - Backend API (orchestration layer) - Port 8080
+#   - Frontend (React app) - Port 5173
+#   - Prometheus + Grafana (monitoring)
+#
+# Quick Start:
+#   task start:all           # Start everything (Qdrant, init, monitoring)
+#   task api:start           # Start ML service (port 8000)
+#   task backend:start       # Start backend (port 8080)
+#   task frontend:start      # Start frontend (port 5173)
+#
+# Individual Components:
+#   task qdrant:start        # Start Qdrant container
+#   task qdrant:init         # Initialize Qdrant with movie data
+#   task monitoring:start    # Start Prometheus + Grafana
+#
+# Stop Everything:
+#   task stop:all            # Stop all services
+#
+# Grafana Dashboards:
+#   - ML Service: http://localhost:3000/d/movie-api-dashboard
+#   - Backend: http://localhost:3000/d/backend-dashboard
+# =============================================================================
+
+vars:
+  # Qdrant Configuration
+  QDRANT_CONTAINER_NAME: qdrant-local
+  QDRANT_PORT: '6333'
+  QDRANT_GRPC_PORT: '6334'
+  QDRANT_URL: 'http://localhost:6333'
+  QDRANT_COLLECTION: imdb-movies-hybrid
+
+  # ML Service Configuration
+  ML_SERVICE_PORT: '8000'
+
+  # Backend Configuration
+  BACKEND_PORT: '8080'
+  BACKEND_DIR: '../../backend'
+
+  # Frontend Configuration
+  FRONTEND_PORT: '5173'
+  FRONTEND_DIR: '../../frontend'
+
+  # Data paths - tries multiple locations
+  LOCAL_MOVIES_DB: complete_imdb_database.parquet
+  NOTEBOOKS_MOVIES_DB: ../../../notebooks/data/complete_imdb_database.parquet
+
+  # Embedding model
+  EMBEDDING_MODEL: sentence-transformers/all-MiniLM-L6-v2
+  EMBEDDING_DIM: '384'
+
+  # Batch size for indexing
+  BATCH_SIZE: '500'
+
+env:
+  # Load environment from mlapi.env if exists
+  dotenv: ['.env', 'mlapi.env']
+
+tasks:
+  # ===========================================================================
+  # DEFAULT
+  # ===========================================================================
+  default:
+    desc: "Show available tasks"
+    cmds:
+      - task --list
+
+  # ===========================================================================
+  # FULL STACK
+  # ===========================================================================
+  start:all:
+    desc: "Start complete local stack (Qdrant + init + monitoring)"
+    summary: |
+      Starts the infrastructure for the ML serving stack locally:
+        1. Qdrant vector database (Docker)
+        2. Initializes Qdrant with movie data
+        3. Prometheus + Grafana monitoring
+
+      After this completes, start the services in separate terminals:
+        task api:start       # ML Service (port 8000)
+        task backend:start   # Backend API (port 8080)
+        task frontend:start  # Frontend (port 5173)
+
+      Prerequisites:
+        - Docker must be running
+        - uv must be installed (for Python deps)
+        - npm must be installed (for frontend)
+        - DAGSHUB_USER_TOKEN must be set in mlapi.env
+
+      Usage:
+        task start:all
+        task start:all SKIP_INIT=true  # Skip Qdrant initialization
+    vars:
+      SKIP_INIT: '{{.SKIP_INIT | default "false"}}'
+    cmds:
+      - task: deps:check
+      - task: qdrant:start
+      - |
+        if [ "{{.SKIP_INIT}}" != "true" ]; then
+          task qdrant:init
+        else
+          echo "⏭️  Skipping Qdrant initialization"
+        fi
+      - task: monitoring:start
+      - |
+        echo ""
+        echo "✅ Infrastructure started!"
+        echo ""
+        echo "🔗 Access points (after starting services):"
+        echo "   ML Service:  http://localhost:{{.ML_SERVICE_PORT}} (task api:start)"
+        echo "   Backend:     http://localhost:{{.BACKEND_PORT}} (task backend:start)"
+        echo "   Frontend:    http://localhost:{{.FRONTEND_PORT}} (task frontend:start)"
+        echo ""
+        echo "🔗 Monitoring:"
+        echo "   Qdrant:      http://localhost:{{.QDRANT_PORT}}/dashboard"
+        echo "   Prometheus:  http://localhost:9090"
+        echo "   Grafana:     http://localhost:3000 (admin/admin)"
+        echo ""
+        echo "📊 Grafana Dashboards:"
+        echo "   ML Service:  http://localhost:3000/d/movie-api-dashboard"
+        echo "   Backend:     http://localhost:3000/d/backend-dashboard"
+        echo ""
+        echo "📝 Start services in separate terminals:"
+        echo "   Terminal 1: task api:start"
+        echo "   Terminal 2: task backend:start"
+        echo "   Terminal 3: task frontend:start"
+
+  stop:all:
+    desc: "Stop all local services"
+    cmds:
+      - task: frontend:stop
+      - task: backend:stop
+      - task: api:stop
+      - task: monitoring:stop
+      - task: qdrant:stop
+      - echo "✅ All services stopped"
+
+  # ===========================================================================
+  # DEPENDENCIES
+  # ===========================================================================
+  deps:check:
+    desc: "Check required dependencies"
+    cmds:
+      - |
+        set -e
+        echo "🔍 Checking dependencies..."
+
+        # Check Docker
+        if ! command -v docker &> /dev/null; then
+          echo "❌ Docker is not installed"
+          exit 1
+        fi
+
+        if ! docker info &> /dev/null; then
+          echo "❌ Docker is not running"
+          exit 1
+        fi
+        echo "   ✓ Docker"
+
+        # Check uv
+        if ! command -v uv &> /dev/null; then
+          echo "❌ uv is not installed. Install with: curl -LsSf https://astral.sh/uv/install.sh | sh"
+          exit 1
+        fi
+        echo "   ✓ uv"
+
+        # Check npm
+        if ! command -v npm &> /dev/null; then
+          echo "⚠️  npm is not installed. Frontend won't work without it."
+        else
+          echo "   ✓ npm"
+        fi
+
+        # Check DAGSHUB_USER_TOKEN
+        if [ -z "${DAGSHUB_USER_TOKEN:-}" ]; then
+          if [ -f "mlapi.env" ] && grep -q "DAGSHUB_USER_TOKEN" mlapi.env; then
+            echo "   ✓ DAGSHUB_USER_TOKEN (from mlapi.env)"
+          else
+            echo "⚠️  DAGSHUB_USER_TOKEN not set. Set it in mlapi.env or environment."
+          fi
+        else
+          echo "   ✓ DAGSHUB_USER_TOKEN"
+        fi
+
+        echo ""
+        echo "✅ All dependencies OK"
+
+  deps:install:
+    desc: "Install all dependencies (Python + npm)"
+    cmds:
+      - echo "📦 Installing ML service dependencies..."
+      - uv sync
+      - echo ""
+      - echo "📦 Installing backend dependencies..."
+      - cd {{.BACKEND_DIR}} && uv sync
+      - echo ""
+      - echo "📦 Installing frontend dependencies..."
+      - cd {{.FRONTEND_DIR}} && npm install
+      - echo ""
+      - echo "✅ All dependencies installed"
+
+  # ===========================================================================
+  # QDRANT
+  # ===========================================================================
+  qdrant:start:
+    desc: "Start Qdrant container"
+    cmds:
+      - |
+        set -e
+        echo "🚀 Starting Qdrant..."
+
+        # Check if already running
+        if docker ps --format '{{`{{.Names}}`}}' | grep -q "^{{.QDRANT_CONTAINER_NAME}}$"; then
+          echo "   Qdrant already running"
+          exit 0
+        fi
+
+        # Check if container exists but stopped
+        if docker ps -a --format '{{`{{.Names}}`}}' | grep -q "^{{.QDRANT_CONTAINER_NAME}}$"; then
+          echo "   Restarting existing container..."
+          docker start {{.QDRANT_CONTAINER_NAME}}
+        else
+          echo "   Creating new Qdrant container..."
+          docker run -d \
+            --name {{.QDRANT_CONTAINER_NAME}} \
+            -p {{.QDRANT_PORT}}:6333 \
+            -p {{.QDRANT_GRPC_PORT}}:6334 \
+            -v qdrant_data:/qdrant/storage \
+            qdrant/qdrant:v1.12.1
+        fi
+
+        # Wait for Qdrant to be ready
+        echo "   Waiting for Qdrant to be ready..."
+        for i in {1..30}; do
+          if curl -s http://localhost:{{.QDRANT_PORT}}/healthz > /dev/null 2>&1; then
+            echo "✅ Qdrant started at http://localhost:{{.QDRANT_PORT}}"
+            exit 0
+          fi
+          sleep 1
+        done
+
+        echo "❌ Qdrant failed to start"
+        exit 1
+
+  qdrant:stop:
+    desc: "Stop Qdrant container"
+    cmds:
+      - |
+        echo "🛑 Stopping Qdrant..."
+        docker stop {{.QDRANT_CONTAINER_NAME}} 2>/dev/null || true
+        echo "✅ Qdrant stopped"
+
+  qdrant:destroy:
+    desc: "Stop and remove Qdrant container and data"
+    cmds:
+      - |
+        echo "🗑️  Destroying Qdrant..."
+        docker stop {{.QDRANT_CONTAINER_NAME}} 2>/dev/null || true
+        docker rm {{.QDRANT_CONTAINER_NAME}} 2>/dev/null || true
+        docker volume rm qdrant_data 2>/dev/null || true
+        echo "✅ Qdrant destroyed"
+
+  qdrant:init:
+    desc: "Initialize Qdrant with movie data"
+    summary: |
+      Indexes the movie database into Qdrant for hybrid search.
+
+      This creates:
+        - Dense vectors (sentence-transformer embeddings)
+        - Sparse vectors (BM25-like for keyword search)
+
+      The indexing process takes a few minutes depending on your hardware.
+
+      Usage:
+        task qdrant:init                    # Initialize (skip if already done)
+        task qdrant:init FORCE_REINDEX=true # Force re-index
+    vars:
+      FORCE_REINDEX: '{{.FORCE_REINDEX | default "false"}}'
+    cmds:
+      - |
+        set -e
+        echo "🔄 Initializing Qdrant collection..."
+        echo ""
+
+        # Check if Qdrant is running
+        if ! curl -s http://localhost:{{.QDRANT_PORT}}/healthz > /dev/null 2>&1; then
+          echo "❌ Qdrant is not running. Start it with: task qdrant:start"
+          exit 1
+        fi
+
+        # Determine data path
+        if [ -f "{{.LOCAL_MOVIES_DB}}" ]; then
+          DATA_PATH="{{.LOCAL_MOVIES_DB}}"
+        elif [ -f "{{.NOTEBOOKS_MOVIES_DB}}" ]; then
+          DATA_PATH="{{.NOTEBOOKS_MOVIES_DB}}"
+        else
+          echo "❌ Movies database not found at:"
+          echo "   - {{.LOCAL_MOVIES_DB}}"
+          echo "   - {{.NOTEBOOKS_MOVIES_DB}}"
+          echo ""
+          echo "Download it from the notebooks or copy it here."
+          exit 1
+        fi
+
+        echo "📁 Using data from: $DATA_PATH"
+        echo ""
+
+        # Run the init script
+        uv run python qdrant_init.py \
+          --qdrant-url "{{.QDRANT_URL}}" \
+          --collection "{{.QDRANT_COLLECTION}}" \
+          --data-path "$DATA_PATH" \
+          --embedding-model "{{.EMBEDDING_MODEL}}" \
+          --batch-size {{.BATCH_SIZE}} \
+          {{if eq .FORCE_REINDEX "true"}}--force-reindex{{end}}
+
+  qdrant:status:
+    desc: "Check Qdrant collection status"
+    cmds:
+      - |
+        set -e
+        echo "📊 Qdrant Status"
+        echo "================"
+        echo ""
+
+        if ! curl -s http://localhost:{{.QDRANT_PORT}}/healthz > /dev/null 2>&1; then
+          echo "❌ Qdrant is not running"
+          exit 1
+        fi
+
+        echo "🔷 Health: OK"
+        echo "🔷 URL: http://localhost:{{.QDRANT_PORT}}"
+        echo "🔷 Dashboard: http://localhost:{{.QDRANT_PORT}}/dashboard"
+        echo ""
+
+        # Get collections
+        echo "🔷 Collections:"
+        curl -s http://localhost:{{.QDRANT_PORT}}/collections | python3 -m json.tool 2>/dev/null || echo "   Could not fetch"
+        echo ""
+
+        # Get specific collection info
+        echo "🔷 Collection '{{.QDRANT_COLLECTION}}':"
+        curl -s http://localhost:{{.QDRANT_PORT}}/collections/{{.QDRANT_COLLECTION}} | python3 -m json.tool 2>/dev/null || echo "   Not found"
+
+  qdrant:logs:
+    desc: "Show Qdrant container logs"
+    cmds:
+      - docker logs {{.QDRANT_CONTAINER_NAME}} --tail 100 -f
+
+  # ===========================================================================
+  # ML SERVICE (api.py)
+  # ===========================================================================
+  api:start:
+    desc: "Start the ML serving API (port {{.ML_SERVICE_PORT}})"
+    summary: |
+      Starts the Movie Recommendation ML API locally.
+
+      The API will:
+        - Load the LightGBM LTR model from MLflow (DagsHub)
+        - Load the sentence-transformer embedding model
+        - Connect to Qdrant for hybrid search
+        - Expose Prometheus metrics at /metrics
+
+      Prerequisites:
+        - Qdrant must be running (task qdrant:start)
+        - DAGSHUB_USER_TOKEN must be set
+
+      Usage:
+        task api:start
+        task api:start MOCK_QDRANT=true  # Use mock data (no Qdrant needed)
+    env:
+      QDRANT_URL: '{{.QDRANT_URL}}'
+      QDRANT_COLLECTION: '{{.QDRANT_COLLECTION}}'
+      MOCK_QDRANT: '{{.MOCK_QDRANT | default "false"}}'
+      PORT: '{{.ML_SERVICE_PORT}}'
+      HOST: '0.0.0.0'
+      WORKERS: '1'
+    cmds:
+      - |
+        set -e
+        echo "🚀 Starting ML Service API..."
+        echo ""
+        echo "   Port: {{.ML_SERVICE_PORT}}"
+        echo "   Qdrant: {{.QDRANT_URL}}"
+        echo "   Mock mode: ${MOCK_QDRANT:-false}"
+        echo ""
+
+        # Check if Qdrant is needed and running
+        if [ "${MOCK_QDRANT:-false}" != "true" ]; then
+          if ! curl -s http://localhost:{{.QDRANT_PORT}}/healthz > /dev/null 2>&1; then
+            echo "⚠️  Qdrant is not running. Starting with mock retriever..."
+            export MOCK_QDRANT=true
+          fi
+        fi
+
+        # Determine data path
+        if [ -f "{{.LOCAL_MOVIES_DB}}" ]; then
+          export MOVIES_DB_PATH="{{.LOCAL_MOVIES_DB}}"
+        elif [ -f "{{.NOTEBOOKS_MOVIES_DB}}" ]; then
+          export MOVIES_DB_PATH="{{.NOTEBOOKS_MOVIES_DB}}"
+        fi
+
+        echo "📁 Movies DB: $MOVIES_DB_PATH"
+        echo ""
+
+        uv run python api.py
+
+  api:stop:
+    desc: "Stop the ML Service API"
+    cmds:
+      - |
+        echo "🛑 Stopping ML Service API..."
+        PID=$(lsof -ti:{{.ML_SERVICE_PORT}} 2>/dev/null || true)
+        if [ -n "$PID" ]; then
+          kill $PID 2>/dev/null || true
+          echo "   Stopped process $PID"
+        fi
+        echo "✅ ML Service API stopped"
+
+  api:test:
+    desc: "Test the ML Service API with a sample query"
+    cmds:
+      - |
+        set -e
+        echo "🧪 Testing ML Service API..."
+        echo ""
+
+        # Health check
+        echo "🔷 Health check:"
+        curl -s http://localhost:{{.ML_SERVICE_PORT}}/health | python3 -m json.tool || echo "   Not responding"
+        echo ""
+
+        # Sample search
+        echo "🔷 Sample search: 'action movies like the dark knight'"
+        curl -s -X POST http://localhost:{{.ML_SERVICE_PORT}}/predict \
+          -H "Content-Type: application/json" \
+          -d '{"query": "action movies like the dark knight", "top_k": 5}' | python3 -m json.tool
+        echo ""
+
+        # Metrics
+        echo "🔷 Metrics endpoint (first 20 lines):"
+        curl -s http://localhost:{{.ML_SERVICE_PORT}}/metrics | head -20
+        echo "..."
+
+  # ===========================================================================
+  # BACKEND API
+  # ===========================================================================
+  backend:start:
+    desc: "Start the Backend API (port {{.BACKEND_PORT}})"
+    summary: |
+      Starts the Backend API that orchestrates frontend, ML service, and IMDB API.
+
+      The backend will:
+        - Receive search queries from the frontend
+        - Call the ML service for recommendations
+        - Enrich results with IMDB API data
+        - Expose Prometheus metrics at /metrics
+
+      Prerequisites:
+        - ML Service should be running (task api:start) for ML mode
+
+      Usage:
+        task backend:start
+        task backend:start ENABLE_ML_SERVICE=false  # Direct IMDB search only
+    dir: '{{.BACKEND_DIR}}'
+    env:
+      ML_SERVICE_URL: 'http://localhost:{{.ML_SERVICE_PORT}}'
+      HOST: '0.0.0.0'
+      PORT: '{{.BACKEND_PORT}}'
+      ENABLE_ML_SERVICE: '{{.ENABLE_ML_SERVICE | default "true"}}'
+      CORS_ORIGINS: '*'
+    cmds:
+      - |
+        set -e
+        echo "🚀 Starting Backend API..."
+        echo ""
+        echo "   Port: {{.BACKEND_PORT}}"
+        echo "   ML Service: ${ML_SERVICE_URL}"
+        echo "   ML Enabled: ${ENABLE_ML_SERVICE}"
+        echo ""
+
+        uv run python main.py
+
+  backend:stop:
+    desc: "Stop the Backend API"
+    cmds:
+      - |
+        echo "🛑 Stopping Backend API..."
+        PID=$(lsof -ti:{{.BACKEND_PORT}} 2>/dev/null || true)
+        if [ -n "$PID" ]; then
+          kill $PID 2>/dev/null || true
+          echo "   Stopped process $PID"
+        fi
+        echo "✅ Backend API stopped"
+
+  backend:test:
+    desc: "Test the Backend API"
+    cmds:
+      - |
+        set -e
+        echo "🧪 Testing Backend API..."
+        echo ""
+
+        # Health check
+        echo "🔷 Health check:"
+        curl -s http://localhost:{{.BACKEND_PORT}}/health | python3 -m json.tool || echo "   Not responding"
+        echo ""
+
+        # Sample search with ML
+        echo "🔷 Search with ML: 'inception'"
+        curl -s "http://localhost:{{.BACKEND_PORT}}/search?query=inception&limit=3" | python3 -m json.tool
+        echo ""
+
+        # Metrics
+        echo "🔷 Metrics endpoint (first 20 lines):"
+        curl -s http://localhost:{{.BACKEND_PORT}}/metrics | head -20
+        echo "..."
+
+  # ===========================================================================
+  # FRONTEND
+  # ===========================================================================
+  frontend:start:
+    desc: "Start the Frontend (port {{.FRONTEND_PORT}})"
+    summary: |
+      Starts the React frontend development server.
+
+      The frontend will:
+        - Run on port {{.FRONTEND_PORT}}
+        - Proxy API requests to the backend
+
+      Prerequisites:
+        - npm dependencies installed (npm install)
+        - Backend should be running (task backend:start)
+
+      Usage:
+        task frontend:start
+    dir: '{{.FRONTEND_DIR}}'
+    cmds:
+      - |
+        set -e
+        echo "🚀 Starting Frontend..."
+        echo ""
+        echo "   Port: {{.FRONTEND_PORT}}"
+        echo "   Backend proxy: http://localhost:{{.BACKEND_PORT}}"
+        echo ""
+
+        npm run dev
+
+  frontend:stop:
+    desc: "Stop the Frontend"
+    cmds:
+      - |
+        echo "🛑 Stopping Frontend..."
+        PID=$(lsof -ti:{{.FRONTEND_PORT}} 2>/dev/null || true)
+        if [ -n "$PID" ]; then
+          kill $PID 2>/dev/null || true
+          echo "   Stopped process $PID"
+        fi
+        echo "✅ Frontend stopped"
+
+  frontend:build:
+    desc: "Build the Frontend for production"
+    dir: '{{.FRONTEND_DIR}}'
+    cmds:
+      - echo "🔨 Building frontend..."
+      - npm run build
+      - echo "✅ Build complete (output in dist/)"
+
+  # ===========================================================================
+  # MONITORING
+  # ===========================================================================
+  monitoring:start:
+    desc: "Start Prometheus and Grafana"
+    dir: monitoring
+    cmds:
+      - |
+        set -e
+        echo "🚀 Starting monitoring stack..."
+        docker compose up -d
+        echo ""
+        echo "✅ Monitoring started:"
+        echo "   Prometheus: http://localhost:9090"
+        echo "   Grafana:    http://localhost:3000 (admin/admin)"
+        echo ""
+        echo "📊 Grafana Dashboards:"
+        echo "   ML Service:  http://localhost:3000/d/movie-api-dashboard"
+        echo "   Backend:     http://localhost:3000/d/backend-dashboard"
+
+  monitoring:stop:
+    desc: "Stop Prometheus and Grafana"
+    dir: monitoring
+    cmds:
+      - |
+        echo "🛑 Stopping monitoring stack..."
+        docker compose down
+        echo "✅ Monitoring stopped"
+
+  monitoring:logs:
+    desc: "Show monitoring stack logs"
+    dir: monitoring
+    cmds:
+      - docker compose logs -f
+
+  # ===========================================================================
+  # DEVELOPMENT
+  # ===========================================================================
+  dev:
+    desc: "Start development environment (ML API with mock data)"
+    env:
+      QDRANT_URL: '{{.QDRANT_URL}}'
+      MOCK_QDRANT: 'true'
+    cmds:
+      - |
+        echo "🔧 Starting development mode..."
+        echo "   Using mock retriever (no Qdrant needed)"
+        echo ""
+        uv run python api.py
+
+  lint:
+    desc: "Run linters"
+    cmds:
+      - uv run ruff check .
+      - uv run ruff format --check .
+
+  format:
+    desc: "Format code"
+    cmds:
+      - uv run ruff format .
+
+  test:
+    desc: "Run tests"
+    cmds:
+      - uv run pytest -v
+
+  # ===========================================================================
+  # LOAD TESTING
+  # ===========================================================================
+  load-test:api:
+    desc: "Run load test against the ML Service API"
+    vars:
+      REQUESTS: '{{.REQUESTS | default "100"}}'
+      CONCURRENCY: '{{.CONCURRENCY | default "10"}}'
+    cmds:
+      - |
+        echo "🔥 Running load test on ML Service API..."
+        echo "   Requests: {{.REQUESTS}}"
+        echo "   Concurrency: {{.CONCURRENCY}}"
+        echo ""
+        uv run python client.py -n {{.REQUESTS}} -c {{.CONCURRENCY}}
+
+  # ===========================================================================
+  # UTILITIES
+  # ===========================================================================
+  clean:
+    desc: "Clean up generated files"
+    cmds:
+      - |
+        echo "🧹 Cleaning up..."
+        rm -rf prometheus_multiproc_dir/
+        rm -rf __pycache__/
+        rm -rf .pytest_cache/
+        find . -name "*.pyc" -delete
+        echo "✅ Cleaned"
+
+  info:
+    desc: "Show environment info"
+    cmds:
+      - |
+        echo "📋 Environment Info"
+        echo "==================="
+        echo ""
+        echo "🔷 Python:"
+        uv run python --version
+        echo ""
+        echo "🔷 Key packages:"
+        uv run python -c "import lightgbm; print(f'   lightgbm: {lightgbm.__version__}')"
+        uv run python -c "import mlflow; print(f'   mlflow: {mlflow.__version__}')"
+        uv run python -c "import qdrant_client; print(f'   qdrant-client: {qdrant_client.__version__}')"
+        uv run python -c "import sentence_transformers; print(f'   sentence-transformers: {sentence_transformers.__version__}')"
+        echo ""
+        echo "🔷 Docker:"
+        docker --version
+        echo ""
+        echo "🔷 Configuration:"
+        echo "   ML_SERVICE_PORT: {{.ML_SERVICE_PORT}}"
+        echo "   BACKEND_PORT: {{.BACKEND_PORT}}"
+        echo "   FRONTEND_PORT: {{.FRONTEND_PORT}}"
+        echo "   QDRANT_URL: {{.QDRANT_URL}}"
+        echo "   QDRANT_COLLECTION: {{.QDRANT_COLLECTION}}"
+        echo "   EMBEDDING_MODEL: {{.EMBEDDING_MODEL}}"
+
+  status:
+    desc: "Check status of all services"
+    cmds:
+      - |
+        echo "📊 Service Status"
+        echo "================="
+        echo ""
+
+        # Qdrant
+        if curl -s http://localhost:{{.QDRANT_PORT}}/healthz > /dev/null 2>&1; then
+          echo "✅ Qdrant:      http://localhost:{{.QDRANT_PORT}} (running)"
+        else
+          echo "❌ Qdrant:      http://localhost:{{.QDRANT_PORT}} (not running)"
+        fi
+
+        # ML Service
+        if curl -s http://localhost:{{.ML_SERVICE_PORT}}/health > /dev/null 2>&1; then
+          echo "✅ ML Service:  http://localhost:{{.ML_SERVICE_PORT}} (running)"
+        else
+          echo "❌ ML Service:  http://localhost:{{.ML_SERVICE_PORT}} (not running)"
+        fi
+
+        # Backend
+        if curl -s http://localhost:{{.BACKEND_PORT}}/health > /dev/null 2>&1; then
+          echo "✅ Backend:     http://localhost:{{.BACKEND_PORT}} (running)"
+        else
+          echo "❌ Backend:     http://localhost:{{.BACKEND_PORT}} (not running)"
+        fi
+
+        # Frontend
+        if curl -s http://localhost:{{.FRONTEND_PORT}} > /dev/null 2>&1; then
+          echo "✅ Frontend:    http://localhost:{{.FRONTEND_PORT}} (running)"
+        else
+          echo "❌ Frontend:    http://localhost:{{.FRONTEND_PORT}} (not running)"
+        fi
+
+        # Prometheus
+        if curl -s http://localhost:9090/-/healthy > /dev/null 2>&1; then
+          echo "✅ Prometheus:  http://localhost:9090 (running)"
+        else
+          echo "❌ Prometheus:  http://localhost:9090 (not running)"
+        fi
+
+        # Grafana
+        if curl -s http://localhost:3000/api/health > /dev/null 2>&1; then
+          echo "✅ Grafana:     http://localhost:3000 (running)"
+        else
+          echo "❌ Grafana:     http://localhost:3000 (not running)"
+        fi

@@ -8,10 +8,36 @@ scrape_configs:
     static_configs:
       - targets: ["localhost:9090"]
 
-  # Scrape Movie Recommendation API
-  # Use host.docker.internal to access the API running on host machine
-  - job_name: "movie-api"
+  # ==========================================================================
+  # ML Service API (Port 8000)
+  # ==========================================================================
+  # Collects: LTR model metrics, feature distributions, nDCG, latencies
+  - job_name: "ml-service"
     static_configs:
       - targets: ["host.docker.internal:8000"]
     metrics_path: "/metrics"
     scrape_interval: 5s
+    relabel_configs:
+      - source_labels: [__address__]
+        target_label: instance
+        replacement: "ml-service-local"
+      - source_labels: []
+        target_label: service
+        replacement: "ml-service"
+
+  # ==========================================================================
+  # Backend API (Port 8080)
+  # ==========================================================================
+  # Collects: Request counts, latencies, ML service calls, IMDB API calls
+  - job_name: "backend"
+    static_configs:
+      - targets: ["host.docker.internal:8080"]
+    metrics_path: "/metrics"
+    scrape_interval: 5s
+    relabel_configs:
+      - source_labels: [__address__]
+        target_label: instance
+        replacement: "backend-local"
+      - source_labels: []
+        target_label: service
+        replacement: "backend"

@@ -1,9 +1,22 @@
 version: "3.8"
 
+# =============================================================================
+# Local Monitoring Stack for Movie Recommendation API
+# =============================================================================
+# Usage:
+#   docker compose up -d     # Start
+#   docker compose down      # Stop
+#   docker compose logs -f   # View logs
+#
+# Or use the Taskfile:
+#   task monitoring:start
+#   task monitoring:stop
+# =============================================================================
+
 services:
   prometheus:
     image: prom/prometheus:v2.51.0
-    container_name: prometheus
+    container_name: prometheus-local
     ports:
       - "9090:9090"
     volumes:
@@ -19,7 +32,7 @@ services:
 
   grafana:
     image: grafana/grafana:10.4.0
-    container_name: grafana
+    container_name: grafana-local
     ports:
       - "3000:3000"
     volumes:

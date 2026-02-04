@@ -18,7 +18,7 @@ from contextlib import asynccontextmanager
 from fastapi import FastAPI, HTTPException, Query
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import Response
-from prometheus_client import Counter, Histogram, generate_latest, CONTENT_TYPE_LATEST
+from prometheus_client import Counter, Histogram, generate_latest, CONTENT_TYPE_LATEST, REGISTRY
 
 from config import get_settings, Settings
 from schemas import SearchRequest, SearchResponse, HealthResponse, MovieResult
@@ -31,24 +31,47 @@ logging.basicConfig(
 )
 logger = logging.getLogger(__name__)
 
-# Prometheus metrics
-REQUEST_COUNT = Counter(
+
+# Prometheus metrics (handle reload gracefully)
+def get_or_create_counter(name, description, labels):
+    """Get existing counter or create new one."""
+    try:
+        return Counter(name, description, labels)
+    except ValueError:
+        # Already registered, get from registry
+        return REGISTRY._names_to_collectors[name]
+
+
+def get_or_create_histogram(name, description, labels=None, buckets=None):
+    """Get existing histogram or create new one."""
+    try:
+        kwargs = {}
+        if labels:
+            kwargs["labelnames"] = labels
+        if buckets:
+            kwargs["buckets"] = buckets
+        return Histogram(name, description, **kwargs)
+    except ValueError:
+        return REGISTRY._names_to_collectors[name]
+
+
+REQUEST_COUNT = get_or_create_counter(
     "backend_requests_total",
     "Total backend requests",
     ["endpoint", "status", "source"],
 )
-REQUEST_LATENCY = Histogram(
+REQUEST_LATENCY = get_or_create_histogram(
     "backend_request_latency_seconds",
     "Request latency in seconds",
-    ["endpoint"],
+    labels=["endpoint"],
     buckets=[0.01, 0.05, 0.1, 0.25, 0.5, 1.0, 2.5, 5.0, 10.0],
 )
-ML_SERVICE_LATENCY = Histogram(
+ML_SERVICE_LATENCY = get_or_create_histogram(
     "backend_ml_service_latency_seconds",
     "ML service call latency",
     buckets=[0.1, 0.25, 0.5, 1.0, 2.5, 5.0, 10.0, 30.0],
 )
-IMDB_API_LATENCY = Histogram(
+IMDB_API_LATENCY = get_or_create_histogram(
     "backend_imdb_api_latency_seconds",
     "IMDB API call latency",
     buckets=[0.1, 0.25, 0.5, 1.0, 2.5, 5.0],
