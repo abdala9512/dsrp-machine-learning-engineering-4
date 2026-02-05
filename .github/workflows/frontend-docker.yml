@@ -34,6 +34,8 @@ jobs:
         with:
           context: app/frontend
           push: true
+          build-args: |
+            VITE_BACKEND_URL=${{ vars.VITE_BACKEND_URL }}
           tags: |
             ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}:latest
             ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}:${{ github.sha }}
