@@ -11,7 +11,7 @@ type: Opaque
 stringData:
   # IMPORTANT: Replace with your actual DagsHub token
   # Get your token at: https://dagshub.com/user/settings/tokens
-  DAGSHUB_USER_TOKEN: "5d7793d5c4048043122faeccdbd0aed884330030"
+  DAGSHUB_USER_TOKEN: ""
 ---
 apiVersion: v1
 kind: ConfigMap

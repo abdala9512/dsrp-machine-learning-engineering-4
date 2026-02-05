@@ -173,15 +173,16 @@ class IMDBApiClient:
             try:
                 # Try different endpoint variations
                 endpoints = [
-                    f"{self.base_url}/search/titles?query={query}&limit={limit}",
-                    f"{self.base_url}/search/titles?q={query}&limit={limit}",
-                    f"{self.base_url}/search?q={query}&limit={limit}",
+                    (f"{self.base_url}/search/titles", {"query": query, "limit": limit}),
+                    (f"{self.base_url}/search/titles", {"q": query, "limit": limit}),
+                    (f"{self.base_url}/search", {"q": query, "limit": limit}),
                 ]
 
-                for endpoint in endpoints:
+                for url, params in endpoints:
                     try:
                         response = await client.get(
-                            endpoint,
+                            url,
+                            params=params,
                             headers={"accept": "application/json"},
                         )
                         if response.status_code == 200:
